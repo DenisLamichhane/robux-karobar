@@ -4,7 +4,7 @@
       "id": 1,
       "email": "denislamichhane900@gmail.com",
       "roblox_user": "denislamichhane",
-      "password": "$2b$10$YEK84rx7TYYujep6bWiCku2gTkld/elSfBcA/FBxmP/rNk/EiOA1m",
+      "password": "$2b$10$c8n0FIQntbOkURsolXlQ9e9aUNhPMP4TiWmcCqh/s7NJh1e2XCnoq",
       "spins": 999,
       "is_admin": 1
     },
@@ -18,5 +18,6 @@
     }
   ],
   "history": [],
-  "payments": []
+  "payments": [],
+  "total_spins_done": 0
 }

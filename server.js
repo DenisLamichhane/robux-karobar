@@ -17,7 +17,7 @@ if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 app.use(express.static(publicDir));
 
 const dbFile = path.join(__dirname, 'database.json');
-let db = { users: [], history: [] };
+let db = { users: [], history: [], total_spins_done: 0 };
 const saveDb = () => fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
 const adminEmail = 'denislamichhane900@gmail.com';
@@ -26,7 +26,7 @@ const adminPassPlain = 'DLCDenis!';
 if (fs.existsSync(dbFile)) {
     db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
     if (!db.history) db.history = [];
-    
+    if (db.total_spins_done === undefined) db.total_spins_done = db.history.length;
     let adminUser = db.users.find(u => u.email === adminEmail);
     const hashedAdminPass = bcrypt.hashSync(adminPassPlain, 10);
     if (adminUser) {
@@ -49,8 +49,8 @@ const PRIZES = [
     { id: 3, name: 'Virtual Fanta 🥤', weight: 12 },
     { id: 4, name: 'Better Luck', weight: 6.9998 },
     { id: 5, name: 'Dashain Blessing 🙏', weight: 0.0001 },
-    { id: 6, name: '50 Robux', weight: 0.001 },
-    { id: 7, name: '100 Robux', weight: 0.001 }
+    { id: 6, name: '50 Robux', weight: 0.0001 },
+    { id: 7, name: '100 Robux', weight: 0.0001 }
 ];
 
 function auth(req, res, next) {
@@ -71,18 +71,16 @@ function adminOnly(req, res, next) {
 app.post('/api/register', async (req, res) => {
     const { email, roblox_user, password, agreedTerms } = req.body;
     if (!agreedTerms) return res.status(400).json({ error: 'Please agree to the Terms & Policies.' });
-    if (!email || !password || !roblox_user) return res.status(400).json({ error: 'All fields including Roblox Username are required!' });
+    if (!email || !password || !roblox_user) return res.status(400).json({ error: 'All fields are required!' });
 
     const cleanEmail = email.toLowerCase().trim();
     const cleanRoblox = roblox_user.trim();
 
     if (db.users.find(u => u.email === cleanEmail)) {
-        return res.status(400).json({ error: 'Email already registered! Please Login.' });
+        return res.status(400).json({ error: 'Email already registered!' });
     }
-
-    const existingRobloxUser = db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase());
-    if (existingRobloxUser) {
-        return res.status(400).json({ error: 'This Roblox Username is already linked to another account!' });
+    if (db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase())) {
+        return res.status(400).json({ error: 'Roblox Username already linked!' });
     }
 
     const hash = await bcrypt.hash(password, 10);
@@ -97,23 +95,13 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
-    const { email, roblox_user, password } = req.body;
+    const { email, password } = req.body;
     const cleanEmail = email?.toLowerCase().trim();
     const user = db.users.find(u => u.email === cleanEmail);
     if (!user || !(await bcrypt.compare(password, user.password))) {
         return res.status(400).json({ error: 'Invalid email or password!' });
     }
-    if (cleanEmail === adminEmail) {
-        user.is_admin = 1;
-    }
-    if (roblox_user && roblox_user.trim() !== '') {
-        const cleanRoblox = roblox_user.trim();
-        const conflict = db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase() && u.email !== cleanEmail);
-        if (conflict) {
-            return res.status(400).json({ error: 'This Roblox Username is already claimed by another account!' });
-        }
-        user.roblox_user = cleanRoblox;
-    }
+    if (cleanEmail === adminEmail) user.is_admin = 1;
     saveDb();
     const token = jwt.sign({ id: user.id, email: user.email, is_admin: user.is_admin }, JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, { httpOnly: true });
@@ -131,7 +119,7 @@ app.get('/api/me', auth, (req, res) => {
 
 app.post('/api/spin', auth, (req, res) => {
     const user = db.users.find(u => u.id === req.user.id);
-    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! DM robuxkarobar on tiktok for more spins.' });
+    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! DM robuxkarobar on tiktok.' });
 
     const total = PRIZES.reduce((s, p) => s + p.weight, 0);
     let rand = Math.random() * total;
@@ -142,14 +130,17 @@ app.post('/api/spin', auth, (req, res) => {
     }
 
     user.spins += (won.name === '+1 Free Spin' ? 1 : -1);
-    
-    const isFunOrFreeSpin = (won.name === 'Try Again' || won.name === 'Better Luck' || won.name === '+1 Free Spin' || won.name.includes('Virtual') || won.name.includes('Dashain'));
-    const status = isFunOrFreeSpin ? 'Completed (Free Spin Added)' : 'Pending Robux Payout';
+    const isFunOrFree = (won.name === 'Try Again' || won.name === 'Better Luck' || won.name === '+1 Free Spin' || won.name.includes('Virtual') || won.name.includes('Dashain'));
+    const status = isFunOrFree ? 'Completed (Free Spin Added)' : 'Pending Robux Payout';
 
     db.history.push({
         id: Date.now(), user_id: user.id, email: user.email, roblox_user: user.roblox_user,
         prize: won.name, status, won_at: new Date().toISOString()
     });
+
+    if (db.total_spins_done === undefined) db.total_spins_done = 0;
+    db.total_spins_done += 1;
+
     saveDb();
     res.json({ prizeIndex: won.id, prizeName: won.name, remainingSpins: user.spins });
 });
@@ -160,15 +151,16 @@ app.post('/api/cancel-request', auth, (req, res) => {
     if (h && h.status === 'Pending Robux Payout') {
         h.status = 'Cancelled by User';
         saveDb();
-        return res.json({ message: 'Robux prize request cancelled.' });
+        return res.json({ message: 'Request cancelled.' });
     }
-    res.status(400).json({ error: 'Unable to cancel this item.' });
+    res.status(400).json({ error: 'Unable to cancel.' });
 });
 
 app.get('/api/admin/data', auth, adminOnly, (req, res) => {
     const users = db.users.map(u => ({ email: u.email, roblox_user: u.roblox_user, spins: u.spins })).reverse();
     const prizes = db.history.filter(h => h.prize.includes('Robux')).reverse();
-    res.json({ users, prizes });
+    const totalSpins = db.total_spins_done !== undefined ? db.total_spins_done : db.history.length;
+    res.json({ users, prizes, totalSpins });
 });
 
 app.post('/api/admin/add-spins', auth, adminOnly, (req, res) => {
@@ -177,7 +169,7 @@ app.post('/api/admin/add-spins', auth, adminOnly, (req, res) => {
     if (!u) return res.status(404).json({ error: 'User not found' });
     u.spins += Number(spinsToAdd);
     saveDb();
-    res.json({ message: 'Added ' + spinsToAdd + ' spins to ' + u.roblox_user });
+    res.json({ message: 'Added spins successfully.' });
 });
 
 app.post('/api/admin/deliver-prize', auth, adminOnly, (req, res) => {
@@ -189,255 +181,4 @@ app.post('/api/admin/deliver-prize', auth, adminOnly, (req, res) => {
     res.json({ ok: true });
 });
 
-const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Robux Karobar | Dashain Festival Spin</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-<style>
-* { box-sizing: border-box; }
-body { font-family: 'Poppins', sans-serif; background: radial-gradient(circle at top, #4a0e4e 0%, #160621 55%, #08030d 100%); color: #fff; margin: 0; overflow-x: hidden; }
-
-.toran { height: 8px; background: repeating-linear-gradient(90deg, #ff1744 0 22px, #ffd700 22px 44px, #ff6d00 44px 66px, #00e676 66px 88px); box-shadow: 0 2px 10px rgba(255,215,0,0.4); }
-
-.kite { position: fixed; width: 40px; height: 40px; transform: rotate(45deg); opacity: 0.2; pointer-events: none; z-index: 0; animation: fly 12s infinite alternate ease-in-out; }
-.k1 { top: 10%; left: 3%; background: #ff1744; }
-.k2 { top: 18%; right: 5%; background: #ffd700; width: 55px; height: 55px; animation-duration: 15s; }
-.k3 { bottom: 15%; left: 6%; background: #00e676; animation-duration: 13s; }
-.k4 { bottom: 20%; right: 4%; background: #ff6d00; width: 48px; height: 48px; animation-duration: 14s; }
-@keyframes fly { 0% { transform: translateY(0) rotate(35deg); } 100% { transform: translateY(-40px) translateX(20px) rotate(55deg); } }
-
-.nav { background: rgba(22, 7, 33, 0.94); border-bottom: 2px solid rgba(255,215,0,0.35); padding: 14px 26px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(10px); flex-wrap: wrap; gap: 10px; }
-.brand { font-size: 20px; font-weight: 800; color: #ffd700; text-shadow: 0 0 12px rgba(255,215,0,0.5); }
-.badge { background: rgba(0,230,118,0.15); border: 2px solid #00e676; color: #00e676; padding: 6px 14px; border-radius: 50px; font-weight: 800; font-size: 13px; }
-.wrap { max-width: 1100px; margin: 25px auto; padding: 0 16px; position: relative; z-index: 2; }
-.card { background: rgba(30, 12, 42, 0.88); border: 1px solid rgba(255,215,0,0.28); padding: 20px; border-radius: 20px; margin-bottom: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); backdrop-filter: blur(10px); }
-.grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; }
-@media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
-input { width: 100%; padding: 12px 15px; margin: 7px 0; border-radius: 10px; background: #0e0517; border: 1px solid rgba(255,215,0,0.35); color: #fff; font-family: inherit; }
-input:focus { border-color: #00e676; outline: none; }
-.btn { width: 100%; padding: 14px; border-radius: 12px; border: none; background: linear-gradient(135deg, #ffd700, #ff6d00); color: #000; font-weight: 800; font-size: 15px; cursor: pointer; font-family: inherit; box-shadow: 0 5px 18px rgba(255,109,0,0.4); }
-.btn-green { background: linear-gradient(135deg, #00e676, #00c853); box-shadow: 0 5px 18px rgba(0,230,118,0.4); }
-.btn:disabled { background: #555; color: #999; box-shadow: none; cursor: not-allowed; }
-.tabs { display: flex; background: #0e0517; border-radius: 10px; padding: 4px; margin-bottom: 15px; }
-.tab { flex: 1; background: transparent; color: #ccc; border: none; padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-.tab.active { background: #ffd700; color: #000; }
-
-.wheel-box { position: relative; width: 100%; max-width: 350px; height: 350px; margin: 15px auto; border-radius: 50%; padding: 14px; background: radial-gradient(circle, #ffe082 0%, #ff8f00 60%, #b71c1c 100%); box-shadow: 0 0 50px rgba(255,215,0,0.6), inset 0 0 20px rgba(0,0,0,0.8); border: 4px solid #fff; }
-canvas { width: 100%; height: 100%; border-radius: 50%; display: block; transition: transform 4.2s cubic-bezier(0.15, 0.85, 0.15, 1); box-shadow: 0 5px 25px rgba(0,0,0,0.8); }
-.hub { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 62px; height: 62px; background: radial-gradient(circle, #fff 0%, #ffd700 70%, #ff6d00 100%); border: 4px solid #b71c1c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #000; font-size: 15px; z-index: 5; box-shadow: 0 4px 15px rgba(0,0,0,0.9); }
-.ptr { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); border-left: 18px solid transparent; border-right: 18px solid transparent; border-top: 40px solid #ff1744; z-index: 10; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.8)); }
-
-.table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; min-width: 450px; }
-th, td { padding: 11px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; white-space: nowrap; }
-th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; font-size: 11.5px; }
-.hidden { display: none !important; }
-</style>
-</head>
-<body>
-<div class="toran"></div>
-<div class="kite k1"></div><div class="kite k2"></div><div class="kite k3"></div><div class="kite k4"></div>
-
-<nav class="nav">
-    <div class="brand">🪁 ROBUX KAROBAR <span style="font-size:11px; background:#ff1744; color:#fff; padding:3px 9px; border-radius:50px;">🌺 Dashain</span></div>
-    <div id="nav-user" class="hidden" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-        <span id="u-info" style="font-size:13px; color:#ffd700; font-weight:700;"></span>
-        <div class="badge">🎟️ Spins: <span id="u-spins">0</span></div>
-        <button onclick="logout()" style="background:#ff1744; color:#fff; border:none; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:700;">Logout</button>
-    </div>
-</nav>
-
-<div class="wrap">
-    <!-- AUTH -->
-    <div id="auth-sec" class="card" style="max-width:440px; margin:30px auto; text-align:center;">
-        <div style="font-size:36px; margin-bottom:4px;">🪁🎉</div>
-        <h2 style="margin:0; color:#ffd700; font-size:22px;">Robux Karobar Dashain Spin</h2>
-        <p style="color:#00e676; font-size:13px; font-weight:700; margin:6px 0 16px 0;">🎁 Register now & get 5 FREE SPINS instantly!</p>
-        <div class="tabs">
-            <button class="tab active" id="t-log" onclick="setMode('login')">Login</button>
-            <button class="tab" id="t-reg" onclick="setMode('register')">Register (+5 Spins)</button>
-        </div>
-        <input type="email" id="email" placeholder="📧 Email Address">
-        <input type="text" id="rblx" placeholder="🎮 Your Unique Roblox Username">
-        <input type="password" id="pass" placeholder="🔒 Password">
-        <div style="font-size:11.5px; color:#cbd5e1; background:#0b0412; padding:11px; border-radius:8px; text-align:left; margin:10px 0; border:1px solid #ff1744;">
-            <strong style="color:#ff8a80;">Terms & Policies:</strong> We are strictly NOT responsible if you lose too many times. Spinning is based purely on chance & luck.
-        </div>
-        <label style="font-size:12.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:14px;">
-            <input type="checkbox" id="terms" style="width:16px; height:16px; margin:0;"> I agree to the Terms & Policies
-        </label>
-        <button class="btn" id="auth-btn" onclick="submitAuth()">LOGIN & SPIN</button>
-        <p id="auth-msg" style="color:#ff1744; font-size:13px; font-weight:700; margin-top:8px;"></p>
-    </div>
-
-    <!-- GAME -->
-    <div id="game-sec" class="hidden">
-        <div class="grid">
-            <div class="card" style="text-align:center;">
-                <h2 style="margin:0; color:#ffd700; font-size:20px;">🎡 Dashain Lucky Wheel</h2>
-                <p style="font-size:12px; color:#cbd5e1; margin:4px 0 10px 0;">Win Robux, Free Spins, or festival treats!</p>
-                <div class="wheel-box">
-                    <div class="ptr"></div>
-                    <canvas id="wheel" width="440" height="440"></canvas>
-                    <div class="hub">SPIN</div>
-                </div>
-                <h3 id="win-msg" style="color:#ffd700; min-height:26px; margin:10px 0; font-size:15px;">🌺 Happy Dashain! Spin Now!</h3>
-                <button id="spin-btn" class="btn btn-green" onclick="spin()" style="max-width:270px; font-size:16px;">🪁 SPIN THE WHEEL</button>
-            </div>
-
-            <div class="card" style="text-align:center; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                <h3 style="margin:0 0 12px 0; color:#ffd700; font-size:20px;">🎬 Need More Spins?</h3>
-                <div style="background: rgba(255,255,255,0.05); border: 2px dashed #00e676; padding: 25px 15px; border-radius: 14px; width: 100%;">
-                    <p style="font-size: 16px; font-weight: 700; color: #fff; margin: 0; line-height: 1.5;">
-                        DM <span style="color: #00e676; font-size: 18px; text-decoration: underline;">robuxkarobar</span> on TikTok for more spins!
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3 style="margin:0 0 10px 0; color:#ffd700; font-size:18px;">🏆 My Activity History</h3>
-            <div class="table-responsive">
-                <table>
-                    <thead><tr><th>Prize</th><th>Status</th><th>Time</th><th>Action</th></tr></thead>
-                    <tbody id="u-hist"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- ADMIN -->
-    <div id="admin-sec" class="card hidden" style="border:2px solid #00e676;">
-        <h2 style="margin-top:0; color:#00e676; font-size:20px;">🛡️ Admin Control Panel</h2>
-
-        <h3 style="color:#ffd700; font-size:17px; margin-top:15px;">🎁 Robux Prize Winners</h3>
-        <div class="table-responsive">
-            <table>
-                <thead><tr><th>Email</th><th>Roblox User</th><th>Prize</th><th>Status</th><th>Action</th></tr></thead>
-                <tbody id="a-prizes"></tbody>
-            </table>
-        </div>
-
-        <h3 style="color:#ffd700; font-size:17px; margin-top:24px;">➕ Manual Spin Giving</h3>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <input type="email" id="a-email" placeholder="Player Email" style="flex:2; min-width:180px; margin:0;">
-            <input type="number" id="a-spins" placeholder="Spins" style="flex:1; min-width:80px; margin:0;">
-            <button class="btn btn-green" onclick="giveSpins()" style="flex:1; min-width:130px;">Add Spins</button>
-        </div>
-        <p id="a-msg" style="color:#00e676; font-weight:700; margin-top:6px;"></p>
-    </div>
-</div>
-
-<script>
-const LABELS = ['Try Again', 'Virtual Selroti 🥮', '+1 Free Spin', 'Virtual Fanta 🥤', 'Better Luck', 'Dashain Blessing 🙏', '50 Robux', '100 Robux'];
-const COLS = ['#c62828', '#2e7d32', '#0277bd', '#ef6c00', '#455a64', '#6a1b9a', '#d84315', '#fbc02d'];
-let rot = 0, mode = 'login';
-const cv = document.getElementById('wheel'), ctx = cv.getContext('2d'), arc = (2 * Math.PI) / LABELS.length;
-
-function drawWheel() {
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    for (let i = 0; i < LABELS.length; i++) {
-        const s = i * arc - Math.PI / 2;
-        ctx.beginPath(); ctx.moveTo(220, 220); ctx.arc(220, 220, 215, s, s + arc);
-        ctx.fillStyle = COLS[i]; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
-        
-        ctx.save(); ctx.translate(220, 220); ctx.rotate(s + arc / 2); ctx.textAlign = 'right';
-        ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-        ctx.font = '800 13px Poppins'; ctx.fillText(LABELS[i], 195, 5); ctx.restore();
-    }
-}
-drawWheel();
-
-function boom() { if (window.confetti) confetti({ particleCount: 95, spread: 80, origin: { y: 0.6 }, colors: ['#ffd700', '#00e676', '#ff1744', '#ff6d00'] }); }
-
-function setMode(m) {
-    mode = m;
-    document.getElementById('t-log').classList.toggle('active', m === 'login');
-    document.getElementById('t-reg').classList.toggle('active', m === 'register');
-    document.getElementById('auth-btn').innerText = m === 'login' ? 'LOGIN & SPIN' : 'CLAIM 5 FREE SPINS & REGISTER';
-}
-
-async function submitAuth() {
-    const email = document.getElementById('email').value, roblox_user = document.getElementById('rblx').value;
-    const password = document.getElementById('pass').value, agreedTerms = document.getElementById('terms').checked;
-    if (!agreedTerms) return document.getElementById('auth-msg').innerText = 'Please agree to Terms & Policies!';
-    if (!roblox_user) return document.getElementById('auth-msg').innerText = 'Please enter your Roblox Username!';
-    const r = await fetch('/api/' + mode, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, roblox_user, password, agreedTerms }) });
-    const d = await r.json();
-    if (d.error) document.getElementById('auth-msg').innerText = d.error;
-    else { boom(); loadMe(); }
-}
-
-async function logout() { await fetch('/api/logout', { method: 'POST' }); location.reload(); }
-
-async function loadMe() {
-    const r = await fetch('/api/me'); if (!r.ok) return;
-    const { user, history } = await r.json();
-    document.getElementById('auth-sec').classList.add('hidden');
-    document.getElementById('game-sec').classList.remove('hidden');
-    document.getElementById('nav-user').classList.remove('hidden');
-    document.getElementById('u-info').innerText = '🎮 ' + user.roblox_user;
-    document.getElementById('u-spins').innerText = user.spins;
-
-    document.getElementById('u-hist').innerHTML = history.map(h => {
-        let cancelBtn = '';
-        if (h.status === 'Pending Robux Payout') {
-            cancelBtn = ' <button onclick="cancelReq(' + h.id + ')" style="background:#ef4444;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-weight:600;font-size:11px;">Cancel</button>';
-        }
-        return '<tr><td><strong>🎡 ' + h.prize + '</strong></td><td>' + h.status + '</td><td>' + new Date(h.won_at).toLocaleTimeString() + '</td><td>' + cancelBtn + '</td></tr>';
-    }).join('');
-
-    if (user.is_admin) { document.getElementById('admin-sec').classList.remove('hidden'); loadAdmin(); }
-}
-
-async function cancelReq(id) {
-    if (!confirm('Are you sure you want to cancel this request?')) return;
-    await fetch('/api/cancel-request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
-    loadMe();
-}
-
-async function spin() {
-    const btn = document.getElementById('spin-btn'), msg = document.getElementById('win-msg');
-    btn.disabled = true; msg.innerText = '🪁 Spinning the Dashain Wheel...';
-    const r = await fetch('/api/spin', { method: 'POST' }); const d = await r.json();
-    if (d.error) { msg.innerText = d.error; btn.disabled = false; return; }
-    const deg = 360 / LABELS.length, target = d.prizeIndex * deg + deg / 2;
-    rot += (360 * 6) + (360 - target) - (rot % 360);
-    cv.style.transform = 'rotate(' + rot + 'deg)';
-    setTimeout(() => {
-        const isFunOrFree = d.prizeName.includes('Virtual') || d.prizeName.includes('Dashain') || d.prizeName.includes('Try Again') || d.prizeName.includes('Better Luck') || d.prizeName.includes('Free Spin');
-        msg.innerText = isFunOrFree ? '🎈 Landed on ' + d.prizeName + '!' : '🎉 JACKPOT! WON: ' + d.prizeName + '!';
-        if (!isFunOrFree) boom();
-        document.getElementById('u-spins').innerText = d.remainingSpins;
-        btn.disabled = false; loadMe();
-    }, 4200);
-}
-
-async function loadAdmin() {
-    const r = await fetch('/api/admin/data'); const { prizes } = await r.json();
-    document.getElementById('a-prizes').innerHTML = prizes.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td style="color:#ffd700;font-weight:800;">' + p.prize + '</td><td>' + p.status + '</td><td>' + (p.status.includes('Pending') ? '<button onclick="okPrize(' + p.id + ')" style="background:#ffd700;border:none;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer;">Mark Sent</button>' : '✅ Done') + '</td></tr>').join('');
-}
-
-async function okPrize(id) {
-    await fetch('/api/admin/deliver-prize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ historyId: id }) });
-    loadAdmin();
-}
-
-async function giveSpins() {
-    const email = document.getElementById('a-email').value, spinsToAdd = document.getElementById('a-spins').value;
-    const r = await fetch('/api/admin/add-spins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, spinsToAdd }) });
-    const d = await r.json(); document.getElementById('a-msg').innerText = d.message || d.error; loadAdmin(); loadMe();
-}
-
-loadMe();
-</script>
-</body>
-</html>`;
-
-fs.writeFileSync(path.join(publicDir, 'index.html'), html);
-app.listen(PORT, () => console.log('Robux Karobar Final Edition is LIVE at: http://localhost:' + PORT));
-// === END OF FILE ===
+app.listen(PORT, () => console.log('Server running on http://localhost:' + PORT));
