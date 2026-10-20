@@ -98,7 +98,6 @@ th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; fo
                 <button id="spin-btn" class="btn btn-green" onclick="spin()" style="max-width:270px; font-size:16px;">🪁 SPIN THE WHEEL</button>
             </div>
 
-            <!-- Replaced QR scan box with TikTok text requirement -->
             <div class="card" style="text-align:center; display:flex; flex-direction:column; justify-content:center; align-items:center;">
                 <h3 style="margin:0 0 12px 0; color:#ffd700; font-size:20px;">🎬 Need More Spins?</h3>
                 <div style="background: rgba(255,255,255,0.05); border: 2px dashed #00e676; padding: 25px 15px; border-radius: 14px; width: 100%;">
@@ -219,9 +218,9 @@ async function spin() {
     rot += (360 * 6) + (360 - target) - (rot % 360);
     cv.style.transform = 'rotate(' + rot + 'deg)';
     setTimeout(() => {
-        const isFun = d.prizeName.includes('Virtual') || d.prizeName.includes('Dashain') || d.prizeName.includes('Try Again') || d.prizeName.includes('Better Luck');
-        msg.innerText = isFun ? '🎈 Landed on ' + d.prizeName + '!' : '🎉 JACKPOT! WON: ' + d.prizeName + '!';
-        if (!isFun) boom();
+        const isFunOrFree = d.prizeName.includes('Virtual') || d.prizeName.includes('Dashain') || d.prizeName.includes('Try Again') || d.prizeName.includes('Better Luck') || d.prizeName.includes('Free Spin');
+        msg.innerText = isFunOrFree ? '🎈 Landed on ' + d.prizeName + '!' : '🎉 JACKPOT! WON: ' + d.prizeName + '!';
+        if (!isFunOrFree) boom();
         document.getElementById('u-spins').innerText = d.remainingSpins;
         btn.disabled = false; loadMe();
     }, 4200);

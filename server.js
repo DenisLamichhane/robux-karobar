@@ -141,10 +141,8 @@ app.post('/api/spin', auth, (req, res) => {
         rand -= p.weight;
     }
 
-    // +1 Free Spin adds 1 to spins, other spins deduct 1
     user.spins += (won.name === '+1 Free Spin' ? 1 : -1);
     
-    // Explicitly check for fun/completed prizes including +1 Free Spin
     const isFunOrFreeSpin = (won.name === 'Try Again' || won.name === 'Better Luck' || won.name === '+1 Free Spin' || won.name.includes('Virtual') || won.name.includes('Dashain'));
     const status = isFunOrFreeSpin ? 'Completed (Free Spin Added)' : 'Pending Robux Payout';
 
@@ -366,4 +364,80 @@ function setMode(m) {
 async function submitAuth() {
     const email = document.getElementById('email').value, roblox_user = document.getElementById('rblx').value;
     const password = document.getElementById('pass').value, agreedTerms = document.getElementById('terms').checked;
-    if (!agreedTerms)
+    if (!agreedTerms) return document.getElementById('auth-msg').innerText = 'Please agree to Terms & Policies!';
+    if (!roblox_user) return document.getElementById('auth-msg').innerText = 'Please enter your Roblox Username!';
+    const r = await fetch('/api/' + mode, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, roblox_user, password, agreedTerms }) });
+    const d = await r.json();
+    if (d.error) document.getElementById('auth-msg').innerText = d.error;
+    else { boom(); loadMe(); }
+}
+
+async function logout() { await fetch('/api/logout', { method: 'POST' }); location.reload(); }
+
+async function loadMe() {
+    const r = await fetch('/api/me'); if (!r.ok) return;
+    const { user, history } = await r.json();
+    document.getElementById('auth-sec').classList.add('hidden');
+    document.getElementById('game-sec').classList.remove('hidden');
+    document.getElementById('nav-user').classList.remove('hidden');
+    document.getElementById('u-info').innerText = '🎮 ' + user.roblox_user;
+    document.getElementById('u-spins').innerText = user.spins;
+
+    document.getElementById('u-hist').innerHTML = history.map(h => {
+        let cancelBtn = '';
+        if (h.status === 'Pending Robux Payout') {
+            cancelBtn = ' <button onclick="cancelReq(' + h.id + ')" style="background:#ef4444;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-weight:600;font-size:11px;">Cancel</button>';
+        }
+        return '<tr><td><strong>🎡 ' + h.prize + '</strong></td><td>' + h.status + '</td><td>' + new Date(h.won_at).toLocaleTimeString() + '</td><td>' + cancelBtn + '</td></tr>';
+    }).join('');
+
+    if (user.is_admin) { document.getElementById('admin-sec').classList.remove('hidden'); loadAdmin(); }
+}
+
+async function cancelReq(id) {
+    if (!confirm('Are you sure you want to cancel this request?')) return;
+    await fetch('/api/cancel-request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+    loadMe();
+}
+
+async function spin() {
+    const btn = document.getElementById('spin-btn'), msg = document.getElementById('win-msg');
+    btn.disabled = true; msg.innerText = '🪁 Spinning the Dashain Wheel...';
+    const r = await fetch('/api/spin', { method: 'POST' }); const d = await r.json();
+    if (d.error) { msg.innerText = d.error; btn.disabled = false; return; }
+    const deg = 360 / LABELS.length, target = d.prizeIndex * deg + deg / 2;
+    rot += (360 * 6) + (360 - target) - (rot % 360);
+    cv.style.transform = 'rotate(' + rot + 'deg)';
+    setTimeout(() => {
+        const isFunOrFree = d.prizeName.includes('Virtual') || d.prizeName.includes('Dashain') || d.prizeName.includes('Try Again') || d.prizeName.includes('Better Luck') || d.prizeName.includes('Free Spin');
+        msg.innerText = isFunOrFree ? '🎈 Landed on ' + d.prizeName + '!' : '🎉 JACKPOT! WON: ' + d.prizeName + '!';
+        if (!isFunOrFree) boom();
+        document.getElementById('u-spins').innerText = d.remainingSpins;
+        btn.disabled = false; loadMe();
+    }, 4200);
+}
+
+async function loadAdmin() {
+    const r = await fetch('/api/admin/data'); const { prizes } = await r.json();
+    document.getElementById('a-prizes').innerHTML = prizes.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td style="color:#ffd700;font-weight:800;">' + p.prize + '</td><td>' + p.status + '</td><td>' + (p.status.includes('Pending') ? '<button onclick="okPrize(' + p.id + ')" style="background:#ffd700;border:none;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer;">Mark Sent</button>' : '✅ Done') + '</td></tr>').join('');
+}
+
+async function okPrize(id) {
+    await fetch('/api/admin/deliver-prize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ historyId: id }) });
+    loadAdmin();
+}
+
+async function giveSpins() {
+    const email = document.getElementById('a-email').value, spinsToAdd = document.getElementById('a-spins').value;
+    const r = await fetch('/api/admin/add-spins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, spinsToAdd }) });
+    const d = await r.json(); document.getElementById('a-msg').innerText = d.message || d.error; loadAdmin(); loadMe();
+}
+
+loadMe();
+</script>
+</body>
+</html>`;
+
+fs.writeFileSync(path.join(publicDir, 'index.html'), html);
+app.listen(PORT, () => console.log('Robux Karobar Final Edition is LIVE at: http://localhost:' + PORT));
+// === END OF FILE ===
