@@ -1,0 +1,22 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "email": "denislamichhane900@gmail.com",
+      "roblox_user": "denislamichhane",
+      "password": "$2b$10$m4bR55uOUcJlEd4.jnmJk.upERaP7CzORT6irf1Pp.S.UzqgmKMki",
+      "spins": 999,
+      "is_admin": 1
+    },
+    {
+      "id": 1792470710511,
+      "email": "denislamichhane@gmail.com",
+      "roblox_user": "MajesticKimRBLX",
+      "password": "$2b$10$5R3Yz.U1wFes2ERZL5xde.zEeQiKrmg/UfGznwDxbNTRiBW9hLLIK",
+      "spins": 1,
+      "is_admin": 0
+    }
+  ],
+  "history": [],
+  "payments": []
+}

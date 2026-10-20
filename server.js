@@ -1,0 +1,509 @@
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const PORT = 3000;
+const JWT_SECRET = 'ROBUX_KAROBAR_DENIS_ADMIN_2026';
+
+app.use(express.json({ limit: '10mb' }));
+app.use(cookieParser());
+
+const publicDir = path.join(__dirname, 'public');
+if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+app.use(express.static(publicDir));
+
+const dbFile = path.join(__dirname, 'database.json');
+let db = { users: [], history: [], payments: [] };
+const saveDb = () => fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+
+const adminEmail = 'denislamichhane900@gmail.com';
+const adminPassPlain = 'DLCDenis!';
+
+if (fs.existsSync(dbFile)) {
+    db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+    if (!db.payments) db.payments = [];
+    
+    let adminUser = db.users.find(u => u.email === adminEmail);
+    const hashedAdminPass = bcrypt.hashSync(adminPassPlain, 10);
+    if (adminUser) {
+        adminUser.is_admin = 1;
+        adminUser.password = hashedAdminPass;
+    } else {
+        db.users.push({ id: 1, email: adminEmail, roblox_user: 'DenisAdmin', password: hashedAdminPass, spins: 999, is_admin: 1 });
+    }
+    saveDb();
+} else {
+    const hashedAdminPass = bcrypt.hashSync(adminPassPlain, 10);
+    db.users.push({ id: 1, email: adminEmail, roblox_user: 'DenisAdmin', password: hashedAdminPass, spins: 999, is_admin: 1 });
+    saveDb();
+}
+
+const PRIZES = [
+    { id: 0, name: 'Try Again', weight: 30 },
+    { id: 1, name: 'Virtual Selroti 🥮', weight: 18 },
+    { id: 2, name: '+1 Free Spin', weight: 14 },
+    { id: 3, name: 'Virtual Fanta 🥤', weight: 12 },
+    { id: 4, name: 'Better Luck', weight: 9 },
+    { id: 5, name: 'Dashain Blessing 🙏', weight: 8 },
+    { id: 6, name: '50 Robux', weight: 6 },
+    { id: 7, name: '100 Robux', weight: 3 }
+];
+
+function auth(req, res, next) {
+    const token = req.cookies.token;
+    if (!token) return res.status(401).json({ error: 'Not logged in' });
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) return res.status(401).json({ error: 'Invalid session' });
+        req.user = decoded;
+        next();
+    });
+}
+
+function adminOnly(req, res, next) {
+    if (!req.user.is_admin) return res.status(403).json({ error: 'Admin only' });
+    next();
+}
+
+app.post('/api/register', async (req, res) => {
+    const { email, roblox_user, password, agreedTerms } = req.body;
+    if (!agreedTerms) return res.status(400).json({ error: 'Please agree to the Terms & Policies.' });
+    if (!email || !password || !roblox_user) return res.status(400).json({ error: 'All fields including Roblox Username are required!' });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanRoblox = roblox_user.trim();
+
+    if (db.users.find(u => u.email === cleanEmail)) {
+        return res.status(400).json({ error: 'Email already registered! Please Login.' });
+    }
+
+    // STRICT CHECK: Ensure one person per Roblox username
+    const existingRobloxUser = db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase());
+    if (existingRobloxUser) {
+        return res.status(400).json({ error: 'This Roblox Username is already linked to another account!' });
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    const isAdminUser = cleanEmail === adminEmail ? 1 : 0;
+    const newUser = { id: Date.now(), email: cleanEmail, roblox_user: cleanRoblox, password: hash, spins: 1, is_admin: isAdminUser };
+    db.users.push(newUser);
+    saveDb();
+
+    const token = jwt.sign({ id: newUser.id, email: newUser.email, is_admin: newUser.is_admin }, JWT_SECRET, { expiresIn: '24h' });
+    res.cookie('token', token, { httpOnly: true });
+    res.json({ message: 'Registered with 1 Free Spin!' });
+});
+
+app.post('/api/login', async (req, res) => {
+    const { email, roblox_user, password } = req.body;
+    const cleanEmail = email?.toLowerCase().trim();
+    const user = db.users.find(u => u.email === cleanEmail);
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(400).json({ error: 'Invalid email or password!' });
+    }
+    if (cleanEmail === adminEmail) {
+        user.is_admin = 1;
+    }
+    if (roblox_user && roblox_user.trim() !== '') {
+        const cleanRoblox = roblox_user.trim();
+        // Check if another account is already using this roblox username
+        const conflict = db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase() && u.email !== cleanEmail);
+        if (conflict) {
+            return res.status(400).json({ error: 'This Roblox Username is already claimed by another account!' });
+        }
+        user.roblox_user = cleanRoblox;
+    }
+    saveDb();
+    const token = jwt.sign({ id: user.id, email: user.email, is_admin: user.is_admin }, JWT_SECRET, { expiresIn: '24h' });
+    res.cookie('token', token, { httpOnly: true });
+    res.json({ message: 'Logged in!' });
+});
+
+app.post('/api/logout', (req, res) => { res.clearCookie('token'); res.json({ ok: true }); });
+
+app.get('/api/me', auth, (req, res) => {
+    const user = db.users.find(u => u.id === req.user.id);
+    if (!user) return res.status(401).json({ error: 'Not found' });
+    const history = db.history.filter(h => h.user_id === user.id).reverse();
+    const payments = db.payments.filter(p => p.user_id === user.id).map(p => ({
+        id: p.id, status: p.status, spins_added: p.spins_added, created_at: p.created_at
+    })).reverse();
+    res.json({ user: { email: user.email, roblox_user: user.roblox_user, spins: user.spins, is_admin: user.is_admin }, history, payments });
+});
+
+app.post('/api/spin', auth, (req, res) => {
+    const user = db.users.find(u => u.id === req.user.id);
+    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! Scan eSewa QR & upload payment proof below.' });
+
+    const total = PRIZES.reduce((s, p) => s + p.weight, 0);
+    let rand = Math.random() * total;
+    let won = PRIZES[0];
+    for (const p of PRIZES) {
+        if (rand < p.weight) { won = p; break; }
+        rand -= p.weight;
+    }
+
+    user.spins += (won.name === '+1 Free Spin' ? 0 : -1);
+    const noPayout = (won.name === 'Try Again' || won.name === 'Better Luck' || won.name.includes('Virtual') || won.name.includes('Dashain'));
+    const status = noPayout ? 'Completed (Fun Prize)' : 'Pending Robux Payout';
+
+    db.history.push({
+        id: Date.now(), user_id: user.id, email: user.email, roblox_user: user.roblox_user,
+        prize: won.name, status, won_at: new Date().toISOString()
+    });
+    saveDb();
+    res.json({ prizeIndex: won.id, prizeName: won.name, remainingSpins: user.spins });
+});
+
+app.post('/api/payment-proof', auth, (req, res) => {
+    const { imageBase64 } = req.body;
+    if (!imageBase64) return res.status(400).json({ error: 'Please attach a payment screenshot first!' });
+    const user = db.users.find(u => u.id === req.user.id);
+    db.payments.push({
+        id: Date.now(), user_id: user.id, email: user.email, roblox_user: user.roblox_user,
+        image: imageBase64, status: 'Pending', spins_added: 0, created_at: new Date().toISOString()
+    });
+    saveDb();
+    res.json({ message: 'Payment proof submitted! Admin will verify and credit your spins.' });
+});
+
+app.get('/api/admin/data', auth, adminOnly, (req, res) => {
+    const users = db.users.map(u => ({ email: u.email, roblox_user: u.roblox_user, spins: u.spins })).reverse();
+    const prizes = db.history.filter(h => h.prize.includes('Robux')).reverse();
+    const payments = db.payments.slice().reverse();
+    res.json({ users, prizes, payments });
+});
+
+app.post('/api/admin/approve-payment', auth, adminOnly, (req, res) => {
+    const { paymentId, spinsToGive } = req.body;
+    const p = db.payments.find(x => x.id === Number(paymentId));
+    if (!p || p.status === 'Approved') return res.status(400).json({ error: 'Already processed' });
+    const u = db.users.find(x => x.id === p.user_id || x.email === p.email);
+    const count = Number(spinsToGive) || 1;
+    if (u) u.spins += count;
+    p.status = 'Approved';
+    p.spins_added = count;
+    saveDb();
+    res.json({ message: 'Approved! Added ' + count + ' spins.' });
+});
+
+app.post('/api/admin/add-spins', auth, adminOnly, (req, res) => {
+    const { email, spinsToAdd } = req.body;
+    const u = db.users.find(x => x.email === email?.toLowerCase().trim());
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    u.spins += Number(spinsToAdd);
+    saveDb();
+    res.json({ message: 'Added ' + spinsToAdd + ' spins to ' + u.roblox_user });
+});
+
+app.post('/api/admin/deliver-prize', auth, adminOnly, (req, res) => {
+    const item = db.history.find(h => h.id === Number(req.body.historyId));
+    if (item) { item.status = 'Robux Sent ✅'; saveDb(); }
+    res.json({ ok: true });
+});
+
+app.post('/api/admin/upload-qr', auth, adminOnly, (req, res) => {
+    const { imageBase64 } = req.body;
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    fs.writeFileSync(path.join(publicDir, 'qr.png'), Buffer.from(base64Data, 'base64'));
+    res.json({ message: 'eSewa QR image updated successfully!' });
+});
+
+const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Robux Karobar | Dashain Festival Spin</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { font-family: 'Poppins', sans-serif; background: radial-gradient(circle at top, #4a0e4e 0%, #160621 55%, #08030d 100%); color: #fff; margin: 0; overflow-x: hidden; }
+
+.toran { height: 8px; background: repeating-linear-gradient(90deg, #ff1744 0 22px, #ffd700 22px 44px, #ff6d00 44px 66px, #00e676 66px 88px); box-shadow: 0 2px 10px rgba(255,215,0,0.4); }
+
+.kite { position: fixed; width: 44px; height: 44px; transform: rotate(45deg); opacity: 0.25; pointer-events: none; z-index: 0; animation: fly 12s infinite alternate ease-in-out; }
+.k1 { top: 12%; left: 5%; background: #ff1744; }
+.k2 { top: 22%; right: 7%; background: #ffd700; width: 58px; height: 58px; animation-duration: 16s; }
+.k3 { bottom: 15%; left: 8%; background: #00e676; animation-duration: 13s; }
+.k4 { bottom: 22% ; right: 6%; background: #ff6d00; width: 50px; height: 50px; animation-duration: 15s; }
+@keyframes fly { 0% { transform: translateY(0) rotate(35deg); } 100% { transform: translateY(-45px) translateX(25px) rotate(55deg); } }
+
+.nav { background: rgba(22, 7, 33, 0.94); border-bottom: 2px solid rgba(255,215,0,0.35); padding: 14px 26px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(10px); }
+.brand { font-size: 22px; font-weight: 800; color: #ffd700; text-shadow: 0 0 12px rgba(255,215,0,0.5); }
+.badge { background: rgba(0,230,118,0.15); border: 2px solid #00e676; color: #00e676; padding: 6px 16px; border-radius: 50px; font-weight: 800; }
+.wrap { max-width: 1100px; margin: 25px auto; padding: 0 16px; position: relative; z-index: 2; }
+.card { background: rgba(30, 12, 42, 0.88); border: 1px solid rgba(255,215,0,0.28); padding: 24px; border-radius: 20px; margin-bottom: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); backdrop-filter: blur(10px); }
+.grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; }
+@media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+input { width: 100%; padding: 12px 15px; margin: 7px 0; border-radius: 10px; background: #0e0517; border: 1px solid rgba(255,215,0,0.35); color: #fff; font-family: inherit; }
+input:focus { border-color: #00e676; outline: none; }
+.btn { width: 100%; padding: 14px; border-radius: 12px; border: none; background: linear-gradient(135deg, #ffd700, #ff6d00); color: #000; font-weight: 800; font-size: 15px; cursor: pointer; font-family: inherit; box-shadow: 0 5px 18px rgba(255,109,0,0.4); }
+.btn-green { background: linear-gradient(135deg, #00e676, #00c853); box-shadow: 0 5px 18px rgba(0,230,118,0.4); }
+.btn:disabled { background: #555; color: #999; box-shadow: none; cursor: not-allowed; }
+.tabs { display: flex; background: #0e0517; border-radius: 10px; padding: 4px; margin-bottom: 15px; }
+.tab { flex: 1; background: transparent; color: #ccc; border: none; padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+.tab.active { background: #ffd700; color: #000; }
+
+.wheel-box { position: relative; width: 370px; height: 370px; margin: 15px auto; border-radius: 50%; padding: 14px; background: radial-gradient(circle, #ffe082 0%, #ff8f00 60%, #b71c1c 100%); box-shadow: 0 0 50px rgba(255,215,0,0.6), inset 0 0 20px rgba(0,0,0,0.8); border: 4px solid #fff; }
+canvas { width: 100%; height: 100%; border-radius: 50%; display: block; transition: transform 4.2s cubic-bezier(0.15, 0.85, 0.15, 1); box-shadow: 0 5px 25px rgba(0,0,0,0.8); }
+.hub { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 68px; height: 68px; background: radial-gradient(circle, #fff 0%, #ffd700 70%, #ff6d00 100%); border: 4px solid #b71c1c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #000; font-size: 16px; z-index: 5; box-shadow: 0 4px 15px rgba(0,0,0,0.9); }
+.ptr { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); border-left: 18px solid transparent; border-right: 18px solid transparent; border-top: 40px solid #ff1744; z-index: 10; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.8)); }
+
+table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+th, td { padding: 11px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; }
+th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; font-size: 11.5px; }
+.thumb { width: 58px; height: 58px; object-fit: cover; border-radius: 7px; border: 2px solid #ffd700; cursor: pointer; transition: 0.2s; }
+.thumb:hover { transform: scale(1.1); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="toran"></div>
+<div class="kite k1"></div><div class="kite k2"></div><div class="kite k3"></div><div class="kite k4"></div>
+
+<nav class="nav">
+    <div class="brand">🪁 ROBUX KAROBAR <span style="font-size:11px; background:#ff1744; color:#fff; padding:3px 9px; border-radius:50px; margin-left:6px;">🌺 Dashain Festival</span></div>
+    <div id="nav-user" class="hidden" style="display:flex; align-items:center; gap:14px;">
+        <span id="u-info" style="font-size:13.5px; color:#ffd700; font-weight:700;"></span>
+        <div class="badge">🎟️ Spins: <span id="u-spins">0</span></div>
+        <button onclick="logout()" style="background:#ff1744; color:#fff; border:none; padding:7px 14px; border-radius:8px; cursor:pointer; font-weight:700;">Logout</button>
+    </div>
+</nav>
+
+<div class="wrap">
+    <!-- AUTH -->
+    <div id="auth-sec" class="card" style="max-width:440px; margin:30px auto; text-align:center;">
+        <div style="font-size:36px; margin-bottom:4px;">🪁🎉</div>
+        <h2 style="margin:0; color:#ffd700;">Robux Karobar Dashain Spin</h2>
+        <p style="color:#00e676; font-size:13px; font-weight:700; margin:6px 0 16px 0;">🎁 Register now & get 1 FREE SPIN instantly!</p>
+        <div class="tabs">
+            <button class="tab active" id="t-log" onclick="setMode('login')">Login</button>
+            <button class="tab" id="t-reg" onclick="setMode('register')">Register (+1 Spin)</button>
+        </div>
+        <input type="email" id="email" placeholder="📧 Email Address">
+        <input type="text" id="rblx" placeholder="🎮 Your Unique Roblox Username">
+        <input type="password" id="pass" placeholder="🔒 Password">
+        <div style="font-size:11.5px; color:#cbd5e1; background:#0b0412; padding:11px; border-radius:8px; text-align:left; margin:10px 0; border:1px solid #ff1744;">
+            <strong style="color:#ff8a80;">Terms & Fair Play Policies:</strong> We are strictly NOT responsible if you lose too many times. Spinning is based purely on chance & luck. Payments are non-refundable.
+        </div>
+        <label style="font-size:12.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:14px;">
+            <input type="checkbox" id="terms" style="width:16px; height:16px; margin:0;"> I agree to the Terms & Policies
+        </label>
+        <button class="btn" id="auth-btn" onclick="submitAuth()">LOGIN & SPIN</button>
+        <p id="auth-msg" style="color:#ff1744; font-size:13px; font-weight:700; margin-top:8px;"></p>
+    </div>
+
+    <!-- GAME -->
+    <div id="game-sec" class="hidden">
+        <div class="grid">
+            <div class="card" style="text-align:center;">
+                <h2 style="margin:0; color:#ffd700;">🎡 Dashain Lucky Wheel</h2>
+                <p style="font-size:13px; color:#cbd5e1; margin:4px 0 10px 0;">Win Robux, Free Spins, or fun festival treats!</p>
+                <div class="wheel-box">
+                    <div class="ptr"></div>
+                    <canvas id="wheel" width="440" height="440"></canvas>
+                    <div class="hub">SPIN</div>
+                </div>
+                <h3 id="win-msg" style="color:#ffd700; min-height:26px; margin:10px 0;">🌺 Happy Dashain! Spin Now!</h3>
+                <button id="spin-btn" class="btn btn-green" onclick="spin()" style="max-width:270px; font-size:17px;">🪁 SPIN THE WHEEL</button>
+            </div>
+
+            <div class="card" style="text-align:center;">
+                <h3 style="margin:0 0 10px 0; color:#ffd700;">📲 Scan eSewa QR & Send Proof</h3>
+                <img id="qr-img" src="/qr.png" alt="Upload qr.png in Admin Panel" style="max-width:190px; border-radius:12px; border:3px solid #60bb46; display:block; margin:0 auto 12px auto; background:#fff; padding:6px;">
+                <div style="text-align:left; background:rgba(0,0,0,0.35); padding:14px; border-radius:12px;">
+                    <label style="font-size:12.5px; font-weight:700; color:#00e676;">Attach Payment Screenshot:</label>
+                    <input type="file" id="proof-file" accept="image/*">
+                    <button class="btn" id="up-btn" onclick="sendProof()" style="margin-top:6px;">📤 Send Payment Proof</button>
+                    <p id="up-msg" style="font-size:12.5px; font-weight:700; margin:8px 0 0 0; text-align:center;"></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin:0; color:#ffd700;">🏆 My Activity & Prize History</h3>
+            <table>
+                <thead><tr><th>Prize / Activity</th><th>Status</th><th>Time</th></tr></thead>
+                <tbody id="u-hist"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ADMIN -->
+    <div id="admin-sec" class="card hidden" style="border:2px solid #00e676;">
+        <h2 style="margin-top:0; color:#00e676;">🛡️ Robux Karobar — Admin Control Panel</h2>
+
+        <div style="background:rgba(0,0,0,0.4); padding:15px; border-radius:12px; margin-bottom:20px;">
+            <h4 style="margin:0 0 6px 0; color:#ffd700;">🖼️ Upload / Update eSewa QR Photo</h4>
+            <input type="file" id="admin-qr-file" accept="image/*" style="max-width:300px;">
+            <button class="btn btn-green" onclick="uploadQr()" style="width:auto; padding:9px 18px;">Upload QR Image</button>
+        </div>
+
+        <h3 style="color:#ffd700;">📸 Player Payment Proofs (Click Photo to Enlarge & Confirm)</h3>
+        <table>
+            <thead><tr><th>Email</th><th>Roblox User</th><th>Photo Proof</th><th>Status</th><th>Confirm & Give Spins</th></tr></thead>
+            <tbody id="a-pay"></tbody>
+        </table>
+
+        <h3 style="color:#ffd700; margin-top:24px;">🎁 Robux Prize Winners (Send Robux to Roblox Users)</h3>
+        <table>
+            <thead><tr><th>Email</th><th>Roblox User</th><th>Prize</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody id="a-prizes"></tbody>
+        </table>
+
+        <h3 style="color:#ffd700; margin-top:24px;">➕ Manual Spin Giving</h3>
+        <div style="display:flex; gap:8px;">
+            <input type="email" id="a-email" placeholder="Player Email">
+            <input type="number" id="a-spins" placeholder="Spins">
+            <button class="btn btn-green" onclick="giveSpins()" style="max-width:160px;">Add Spins</button>
+        </div>
+        <p id="a-msg" style="color:#00e676; font-weight:700; margin-top:6px;"></p>
+    </div>
+</div>
+
+<div id="modal" class="hidden" onclick="this.classList.add('hidden')" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:999; display:flex; align-items:center; justify-content:center; cursor:zoom-out;">
+    <img id="m-img" style="max-width:90%; max-height:90%; border-radius:12px; border:3px solid #ffd700;">
+</div>
+
+<script>
+const LABELS = ['Try Again', 'Virtual Selroti 🥮', '+1 Free Spin', 'Virtual Fanta 🥤', 'Better Luck', 'Dashain Blessing 🙏', '50 Robux', '100 Robux'];
+const COLS = ['#c62828', '#2e7d32', '#0277bd', '#ef6c00', '#455a64', '#6a1b9a', '#d84315', '#fbc02d'];
+let rot = 0, mode = 'login';
+const cv = document.getElementById('wheel'), ctx = cv.getContext('2d'), arc = (2 * Math.PI) / LABELS.length;
+
+function drawWheel() {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    for (let i = 0; i < LABELS.length; i++) {
+        const s = i * arc - Math.PI / 2;
+        ctx.beginPath(); ctx.moveTo(220, 220); ctx.arc(220, 220, 215, s, s + arc);
+        ctx.fillStyle = COLS[i]; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
+        
+        ctx.save(); ctx.translate(220, 220); ctx.rotate(s + arc / 2); ctx.textAlign = 'right';
+        ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+        ctx.font = '800 14px Poppins'; ctx.fillText(LABELS[i], 195, 6); ctx.restore();
+    }
+}
+drawWheel();
+
+function boom() { if (window.confetti) confetti({ particleCount: 95, spread: 80, origin: { y: 0.6 }, colors: ['#ffd700', '#00e676', '#ff1744', '#ff6d00'] }); }
+
+function setMode(m) {
+    mode = m;
+    document.getElementById('t-log').classList.toggle('active', m === 'login');
+    document.getElementById('t-reg').classList.toggle('active', m === 'register');
+    document.getElementById('auth-btn').innerText = m === 'login' ? 'LOGIN & SPIN' : 'CLAIM 1 FREE SPIN & REGISTER';
+}
+
+async function submitAuth() {
+    const email = document.getElementById('email').value, roblox_user = document.getElementById('rblx').value;
+    const password = document.getElementById('pass').value, agreedTerms = document.getElementById('terms').checked;
+    if (!agreedTerms) return document.getElementById('auth-msg').innerText = 'Please agree to Terms & Policies!';
+    if (!roblox_user) return document.getElementById('auth-msg').innerText = 'Please enter your Roblox Username!';
+    const r = await fetch('/api/' + mode, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, roblox_user, password, agreedTerms }) });
+    const d = await r.json();
+    if (d.error) document.getElementById('auth-msg').innerText = d.error;
+    else { boom(); loadMe(); }
+}
+
+async function logout() { await fetch('/api/logout', { method: 'POST' }); location.reload(); }
+
+async function loadMe() {
+    const r = await fetch('/api/me'); if (!r.ok) return;
+    const { user, history, payments } = await r.json();
+    document.getElementById('auth-sec').classList.add('hidden');
+    document.getElementById('game-sec').classList.remove('hidden');
+    document.getElementById('nav-user').classList.remove('hidden');
+    document.getElementById('u-info').innerText = '🎮 ' + user.roblox_user;
+    document.getElementById('u-spins').innerText = user.spins;
+
+    const pRows = payments.map(p => '<tr><td>📸 Payment Proof</td><td>' + p.status + (p.spins_added ? ' (+' + p.spins_added + ' Spins)' : '') + '</td><td>' + new Date(p.created_at).toLocaleTimeString() + '</td></tr>');
+    const hRows = history.map(h => '<tr><td>🎡 <strong>' + h.prize + '</strong></td><td>' + h.status + '</td><td>' + new Date(h.won_at).toLocaleTimeString() + '</td></tr>');
+    document.getElementById('u-hist').innerHTML = pRows.concat(hRows).join('');
+    if (user.is_admin) { document.getElementById('admin-sec').classList.remove('hidden'); loadAdmin(); }
+}
+
+async function spin() {
+    const btn = document.getElementById('spin-btn'), msg = document.getElementById('win-msg');
+    btn.disabled = true; msg.innerText = '🪁 Spinning the Dashain Wheel...';
+    const r = await fetch('/api/spin', { method: 'POST' }); const d = await r.json();
+    if (d.error) { msg.innerText = d.error; btn.disabled = false; return; }
+    const deg = 360 / LABELS.length, target = d.prizeIndex * deg + deg / 2;
+    rot += (360 * 6) + (360 - target) - (rot % 360);
+    cv.style.transform = 'rotate(' + rot + 'deg)';
+    setTimeout(() => {
+        const isFun = d.prizeName.includes('Virtual') || d.prizeName.includes('Dashain') || d.prizeName.includes('Try Again') || d.prizeName.includes('Better Luck');
+        msg.innerText = isFun ? '🎈 Landed on ' + d.prizeName + '!' : '🎉 JACKPOT! WON: ' + d.prizeName + '!';
+        if (!isFun) boom();
+        document.getElementById('u-spins').innerText = d.remainingSpins;
+        btn.disabled = false; loadMe();
+    }, 4200);
+}
+
+function compressAndSend(file, url, cb) {
+    const reader = new FileReader();
+    reader.onload = e => {
+        const img = new Image();
+        img.onload = async () => {
+            const c = document.createElement('canvas');
+            const max = 700; let w = img.width, h = img.height;
+            if (w > max || h > max) { if (w > h) { h *= max / w; w = max; } else { w *= max / h; h = max; } }
+            c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+            const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ imageBase64: c.toDataURL('image/jpeg', 0.8) }) });
+            cb(await res.json());
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function sendProof() {
+    const f = document.getElementById('proof-file').files[0], msg = document.getElementById('up-msg');
+    if (!f) return msg.innerText = 'Select your payment screenshot first!';
+    msg.innerText = 'Uploading...';
+    compressAndSend(f, '/api/payment-proof', d => { msg.innerText = d.message || d.error; loadMe(); });
+}
+
+function uploadQr() {
+    const f = document.getElementById('admin-qr-file').files[0];
+    if (!f) return alert('Select your QR image first!');
+    compressAndSend(f, '/api/admin/upload-qr', d => { alert(d.message); document.getElementById('qr-img').src = '/qr.png?t=' + Date.now(); });
+}
+
+function showImg(src) { document.getElementById('m-img').src = src; document.getElementById('modal').classList.remove('hidden'); }
+
+async function loadAdmin() {
+    const r = await fetch('/api/admin/data'); const { prizes, payments } = await r.json();
+    document.getElementById('a-pay').innerHTML = payments.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td><img class="thumb" src="' + p.image + '" onclick="showImg(this.src)"></td><td>' + p.status + '</td><td>' + (p.status === 'Pending' ? '<input type="number" id="sp-' + p.id + '" value="1" style="width:60px;padding:5px;margin-right:5px;background:#0e0517;color:#fff;border:1px solid #ffd700;"><button onclick="okPay(' + p.id + ')" style="background:#00e676;border:none;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;">Confirm</button>' : 'Done (+' + p.spins_added + ')') + '</td></tr>').join('');
+    document.getElementById('a-prizes').innerHTML = prizes.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td style="color:#ffd700;font-weight:800;">' + p.prize + '</td><td>' + p.status + '</td><td>' + (p.status.includes('Pending') ? '<button onclick="okPrize(' + p.id + ')" style="background:#ffd700;border:none;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;">Mark Robux Sent</button>' : '✅ Sent') + '</td></tr>').join('');
+}
+
+async function okPay(id) {
+    const spinsToGive = document.getElementById('sp-' + id).value;
+    await fetch('/api/admin/approve-payment', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ paymentId: id, spinsToGive }) });
+    loadAdmin(); loadMe();
+}
+
+async function okPrize(id) {
+    await fetch('/api/admin/deliver-prize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ historyId: id }) });
+    loadAdmin();
+}
+
+async function giveSpins() {
+    const email = document.getElementById('a-email').value, spinsToAdd = document.getElementById('a-spins').value;
+    const r = await fetch('/api/admin/add-spins', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, spinsToAdd }) });
+    const d = await r.json(); document.getElementById('a-msg').innerText = d.message || d.error; loadAdmin(); loadMe();
+}
+
+loadMe();
+</script>
+</body>
+</html>`;
+
+fs.writeFileSync(path.join(publicDir, 'index.html'), html);
+app.listen(PORT, () => console.log('Robux Karobar Final Dashain Edition is LIVE at: http://localhost:' + PORT));
+// === END OF FILE ===
