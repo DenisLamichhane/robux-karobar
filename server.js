@@ -17,7 +17,7 @@ if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 app.use(express.static(publicDir));
 
 const dbFile = path.join(__dirname, 'database.json');
-let db = { users: [], history: [], payments: [] };
+let db = { users: [], history: [] };
 const saveDb = () => fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
 const adminEmail = 'denislamichhane900@gmail.com';
@@ -25,7 +25,7 @@ const adminPassPlain = 'DLCDenis!';
 
 if (fs.existsSync(dbFile)) {
     db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-    if (!db.payments) db.payments = [];
+    if (!db.history) db.history = [];
     
     let adminUser = db.users.find(u => u.email === adminEmail);
     const hashedAdminPass = bcrypt.hashSync(adminPassPlain, 10);
@@ -42,15 +42,16 @@ if (fs.existsSync(dbFile)) {
     saveDb();
 }
 
+// Chances set to extremely low (0.0001) for Robux prizes
 const PRIZES = [
-    { id: 0, name: 'Try Again', weight: 30 },
-    { id: 1, name: 'Virtual Selroti 🥮', weight: 18 },
-    { id: 2, name: '+1 Free Spin', weight: 14 },
+    { id: 0, name: 'Try Again', weight: 45 },
+    { id: 1, name: 'Virtual Selroti 🥮', weight: 20 },
+    { id: 2, name: '+1 Free Spin', weight: 15 },
     { id: 3, name: 'Virtual Fanta 🥤', weight: 12 },
-    { id: 4, name: 'Better Luck', weight: 9 },
-    { id: 5, name: 'Dashain Blessing 🙏', weight: 8 },
-    { id: 6, name: '50 Robux', weight: 6 },
-    { id: 7, name: '100 Robux', weight: 3 }
+    { id: 4, name: 'Better Luck', weight: 6.9998 },
+    { id: 5, name: 'Dashain Blessing 🙏', weight: 0.0001 },
+    { id: 6, name: '50 Robux', weight: 0.0001 },
+    { id: 7, name: '100 Robux', weight: 0.0001 }
 ];
 
 function auth(req, res, next) {
@@ -80,7 +81,6 @@ app.post('/api/register', async (req, res) => {
         return res.status(400).json({ error: 'Email already registered! Please Login.' });
     }
 
-    // STRICT CHECK: Ensure one person per Roblox username
     const existingRobloxUser = db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase());
     if (existingRobloxUser) {
         return res.status(400).json({ error: 'This Roblox Username is already linked to another account!' });
@@ -88,13 +88,14 @@ app.post('/api/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const isAdminUser = cleanEmail === adminEmail ? 1 : 0;
-    const newUser = { id: Date.now(), email: cleanEmail, roblox_user: cleanRoblox, password: hash, spins: 1, is_admin: isAdminUser };
+    // Everyone starts with 5 spins when they register
+    const newUser = { id: Date.now(), email: cleanEmail, roblox_user: cleanRoblox, password: hash, spins: 5, is_admin: isAdminUser };
     db.users.push(newUser);
     saveDb();
 
     const token = jwt.sign({ id: newUser.id, email: newUser.email, is_admin: newUser.is_admin }, JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, { httpOnly: true });
-    res.json({ message: 'Registered with 1 Free Spin!' });
+    res.json({ message: 'Registered with 5 FREE Spins!' });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -109,7 +110,6 @@ app.post('/api/login', async (req, res) => {
     }
     if (roblox_user && roblox_user.trim() !== '') {
         const cleanRoblox = roblox_user.trim();
-        // Check if another account is already using this roblox username
         const conflict = db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase() && u.email !== cleanEmail);
         if (conflict) {
             return res.status(400).json({ error: 'This Roblox Username is already claimed by another account!' });
@@ -128,15 +128,12 @@ app.get('/api/me', auth, (req, res) => {
     const user = db.users.find(u => u.id === req.user.id);
     if (!user) return res.status(401).json({ error: 'Not found' });
     const history = db.history.filter(h => h.user_id === user.id).reverse();
-    const payments = db.payments.filter(p => p.user_id === user.id).map(p => ({
-        id: p.id, status: p.status, spins_added: p.spins_added, created_at: p.created_at
-    })).reverse();
-    res.json({ user: { email: user.email, roblox_user: user.roblox_user, spins: user.spins, is_admin: user.is_admin }, history, payments });
+    res.json({ user: { email: user.email, roblox_user: user.roblox_user, spins: user.spins, is_admin: user.is_admin }, history });
 });
 
 app.post('/api/spin', auth, (req, res) => {
     const user = db.users.find(u => u.id === req.user.id);
-    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! Scan eSewa QR & upload payment proof below.' });
+    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! DM robuxkarobar on tiktok for more spins.' });
 
     const total = PRIZES.reduce((s, p) => s + p.weight, 0);
     let rand = Math.random() * total;
@@ -158,36 +155,21 @@ app.post('/api/spin', auth, (req, res) => {
     res.json({ prizeIndex: won.id, prizeName: won.name, remainingSpins: user.spins });
 });
 
-app.post('/api/payment-proof', auth, (req, res) => {
-    const { imageBase64 } = req.body;
-    if (!imageBase64) return res.status(400).json({ error: 'Please attach a payment screenshot first!' });
-    const user = db.users.find(u => u.id === req.user.id);
-    db.payments.push({
-        id: Date.now(), user_id: user.id, email: user.email, roblox_user: user.roblox_user,
-        image: imageBase64, status: 'Pending', spins_added: 0, created_at: new Date().toISOString()
-    });
-    saveDb();
-    res.json({ message: 'Payment proof submitted! Admin will verify and credit your spins.' });
+app.post('/api/cancel-request', auth, (req, res) => {
+    const { id } = req.body;
+    const h = db.history.find(x => x.id === Number(id) && x.user_id === req.user.id);
+    if (h && h.status === 'Pending Robux Payout') {
+        h.status = 'Cancelled by User';
+        saveDb();
+        return res.json({ message: 'Robux prize request cancelled.' });
+    }
+    res.status(400).json({ error: 'Unable to cancel this item.' });
 });
 
 app.get('/api/admin/data', auth, adminOnly, (req, res) => {
     const users = db.users.map(u => ({ email: u.email, roblox_user: u.roblox_user, spins: u.spins })).reverse();
     const prizes = db.history.filter(h => h.prize.includes('Robux')).reverse();
-    const payments = db.payments.slice().reverse();
-    res.json({ users, prizes, payments });
-});
-
-app.post('/api/admin/approve-payment', auth, adminOnly, (req, res) => {
-    const { paymentId, spinsToGive } = req.body;
-    const p = db.payments.find(x => x.id === Number(paymentId));
-    if (!p || p.status === 'Approved') return res.status(400).json({ error: 'Already processed' });
-    const u = db.users.find(x => x.id === p.user_id || x.email === p.email);
-    const count = Number(spinsToGive) || 1;
-    if (u) u.spins += count;
-    p.status = 'Approved';
-    p.spins_added = count;
-    saveDb();
-    res.json({ message: 'Approved! Added ' + count + ' spins.' });
+    res.json({ users, prizes });
 });
 
 app.post('/api/admin/add-spins', auth, adminOnly, (req, res) => {
@@ -201,15 +183,11 @@ app.post('/api/admin/add-spins', auth, adminOnly, (req, res) => {
 
 app.post('/api/admin/deliver-prize', auth, adminOnly, (req, res) => {
     const item = db.history.find(h => h.id === Number(req.body.historyId));
-    if (item) { item.status = 'Robux Sent ✅'; saveDb(); }
+    if (item && item.status === 'Pending Robux Payout') { 
+        item.status = 'Robux Sent ✅'; 
+        saveDb(); 
+    }
     res.json({ ok: true });
-});
-
-app.post('/api/admin/upload-qr', auth, adminOnly, (req, res) => {
-    const { imageBase64 } = req.body;
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-    fs.writeFileSync(path.join(publicDir, 'qr.png'), Buffer.from(base64Data, 'base64'));
-    res.json({ message: 'eSewa QR image updated successfully!' });
 });
 
 const html = `<!DOCTYPE html>
@@ -226,18 +204,18 @@ body { font-family: 'Poppins', sans-serif; background: radial-gradient(circle at
 
 .toran { height: 8px; background: repeating-linear-gradient(90deg, #ff1744 0 22px, #ffd700 22px 44px, #ff6d00 44px 66px, #00e676 66px 88px); box-shadow: 0 2px 10px rgba(255,215,0,0.4); }
 
-.kite { position: fixed; width: 44px; height: 44px; transform: rotate(45deg); opacity: 0.25; pointer-events: none; z-index: 0; animation: fly 12s infinite alternate ease-in-out; }
-.k1 { top: 12%; left: 5%; background: #ff1744; }
-.k2 { top: 22%; right: 7%; background: #ffd700; width: 58px; height: 58px; animation-duration: 16s; }
-.k3 { bottom: 15%; left: 8%; background: #00e676; animation-duration: 13s; }
-.k4 { bottom: 22% ; right: 6%; background: #ff6d00; width: 50px; height: 50px; animation-duration: 15s; }
-@keyframes fly { 0% { transform: translateY(0) rotate(35deg); } 100% { transform: translateY(-45px) translateX(25px) rotate(55deg); } }
+.kite { position: fixed; width: 40px; height: 40px; transform: rotate(45deg); opacity: 0.2; pointer-events: none; z-index: 0; animation: fly 12s infinite alternate ease-in-out; }
+.k1 { top: 10%; left: 3%; background: #ff1744; }
+.k2 { top: 18%; right: 5%; background: #ffd700; width: 55px; height: 55px; animation-duration: 15s; }
+.k3 { bottom: 15%; left: 6%; background: #00e676; animation-duration: 13s; }
+.k4 { bottom: 20%; right: 4%; background: #ff6d00; width: 48px; height: 48px; animation-duration: 14s; }
+@keyframes fly { 0% { transform: translateY(0) rotate(35deg); } 100% { transform: translateY(-40px) translateX(20px) rotate(55deg); } }
 
-.nav { background: rgba(22, 7, 33, 0.94); border-bottom: 2px solid rgba(255,215,0,0.35); padding: 14px 26px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(10px); }
-.brand { font-size: 22px; font-weight: 800; color: #ffd700; text-shadow: 0 0 12px rgba(255,215,0,0.5); }
-.badge { background: rgba(0,230,118,0.15); border: 2px solid #00e676; color: #00e676; padding: 6px 16px; border-radius: 50px; font-weight: 800; }
+.nav { background: rgba(22, 7, 33, 0.94); border-bottom: 2px solid rgba(255,215,0,0.35); padding: 14px 26px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(10px); flex-wrap: wrap; gap: 10px; }
+.brand { font-size: 20px; font-weight: 800; color: #ffd700; text-shadow: 0 0 12px rgba(255,215,0,0.5); }
+.badge { background: rgba(0,230,118,0.15); border: 2px solid #00e676; color: #00e676; padding: 6px 14px; border-radius: 50px; font-weight: 800; font-size: 13px; }
 .wrap { max-width: 1100px; margin: 25px auto; padding: 0 16px; position: relative; z-index: 2; }
-.card { background: rgba(30, 12, 42, 0.88); border: 1px solid rgba(255,215,0,0.28); padding: 24px; border-radius: 20px; margin-bottom: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); backdrop-filter: blur(10px); }
+.card { background: rgba(30, 12, 42, 0.88); border: 1px solid rgba(255,215,0,0.28); padding: 20px; border-radius: 20px; margin-bottom: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); backdrop-filter: blur(10px); }
 .grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px; }
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 input { width: 100%; padding: 12px 15px; margin: 7px 0; border-radius: 10px; background: #0e0517; border: 1px solid rgba(255,215,0,0.35); color: #fff; font-family: inherit; }
@@ -249,16 +227,15 @@ input:focus { border-color: #00e676; outline: none; }
 .tab { flex: 1; background: transparent; color: #ccc; border: none; padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; }
 .tab.active { background: #ffd700; color: #000; }
 
-.wheel-box { position: relative; width: 370px; height: 370px; margin: 15px auto; border-radius: 50%; padding: 14px; background: radial-gradient(circle, #ffe082 0%, #ff8f00 60%, #b71c1c 100%); box-shadow: 0 0 50px rgba(255,215,0,0.6), inset 0 0 20px rgba(0,0,0,0.8); border: 4px solid #fff; }
+.wheel-box { position: relative; width: 100%; max-width: 350px; height: 350px; margin: 15px auto; border-radius: 50%; padding: 14px; background: radial-gradient(circle, #ffe082 0%, #ff8f00 60%, #b71c1c 100%); box-shadow: 0 0 50px rgba(255,215,0,0.6), inset 0 0 20px rgba(0,0,0,0.8); border: 4px solid #fff; }
 canvas { width: 100%; height: 100%; border-radius: 50%; display: block; transition: transform 4.2s cubic-bezier(0.15, 0.85, 0.15, 1); box-shadow: 0 5px 25px rgba(0,0,0,0.8); }
-.hub { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 68px; height: 68px; background: radial-gradient(circle, #fff 0%, #ffd700 70%, #ff6d00 100%); border: 4px solid #b71c1c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #000; font-size: 16px; z-index: 5; box-shadow: 0 4px 15px rgba(0,0,0,0.9); }
+.hub { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 62px; height: 62px; background: radial-gradient(circle, #fff 0%, #ffd700 70%, #ff6d00 100%); border: 4px solid #b71c1c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #000; font-size: 15px; z-index: 5; box-shadow: 0 4px 15px rgba(0,0,0,0.9); }
 .ptr { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); border-left: 18px solid transparent; border-right: 18px solid transparent; border-top: 40px solid #ff1744; z-index: 10; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.8)); }
 
-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
-th, td { padding: 11px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; }
+.table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; min-width: 450px; }
+th, td { padding: 11px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; white-space: nowrap; }
 th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; font-size: 11.5px; }
-.thumb { width: 58px; height: 58px; object-fit: cover; border-radius: 7px; border: 2px solid #ffd700; cursor: pointer; transition: 0.2s; }
-.thumb:hover { transform: scale(1.1); }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -267,11 +244,11 @@ th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; fo
 <div class="kite k1"></div><div class="kite k2"></div><div class="kite k3"></div><div class="kite k4"></div>
 
 <nav class="nav">
-    <div class="brand">🪁 ROBUX KAROBAR <span style="font-size:11px; background:#ff1744; color:#fff; padding:3px 9px; border-radius:50px; margin-left:6px;">🌺 Dashain Festival</span></div>
-    <div id="nav-user" class="hidden" style="display:flex; align-items:center; gap:14px;">
-        <span id="u-info" style="font-size:13.5px; color:#ffd700; font-weight:700;"></span>
+    <div class="brand">🪁 ROBUX KAROBAR <span style="font-size:11px; background:#ff1744; color:#fff; padding:3px 9px; border-radius:50px;">🌺 Dashain</span></div>
+    <div id="nav-user" class="hidden" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span id="u-info" style="font-size:13px; color:#ffd700; font-weight:700;"></span>
         <div class="badge">🎟️ Spins: <span id="u-spins">0</span></div>
-        <button onclick="logout()" style="background:#ff1744; color:#fff; border:none; padding:7px 14px; border-radius:8px; cursor:pointer; font-weight:700;">Logout</button>
+        <button onclick="logout()" style="background:#ff1744; color:#fff; border:none; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:700;">Logout</button>
     </div>
 </nav>
 
@@ -279,17 +256,17 @@ th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; fo
     <!-- AUTH -->
     <div id="auth-sec" class="card" style="max-width:440px; margin:30px auto; text-align:center;">
         <div style="font-size:36px; margin-bottom:4px;">🪁🎉</div>
-        <h2 style="margin:0; color:#ffd700;">Robux Karobar Dashain Spin</h2>
-        <p style="color:#00e676; font-size:13px; font-weight:700; margin:6px 0 16px 0;">🎁 Register now & get 1 FREE SPIN instantly!</p>
+        <h2 style="margin:0; color:#ffd700; font-size:22px;">Robux Karobar Dashain Spin</h2>
+        <p style="color:#00e676; font-size:13px; font-weight:700; margin:6px 0 16px 0;">🎁 Register now & get 5 FREE SPINS instantly!</p>
         <div class="tabs">
             <button class="tab active" id="t-log" onclick="setMode('login')">Login</button>
-            <button class="tab" id="t-reg" onclick="setMode('register')">Register (+1 Spin)</button>
+            <button class="tab" id="t-reg" onclick="setMode('register')">Register (+5 Spins)</button>
         </div>
         <input type="email" id="email" placeholder="📧 Email Address">
         <input type="text" id="rblx" placeholder="🎮 Your Unique Roblox Username">
         <input type="password" id="pass" placeholder="🔒 Password">
         <div style="font-size:11.5px; color:#cbd5e1; background:#0b0412; padding:11px; border-radius:8px; text-align:left; margin:10px 0; border:1px solid #ff1744;">
-            <strong style="color:#ff8a80;">Terms & Fair Play Policies:</strong> We are strictly NOT responsible if you lose too many times. Spinning is based purely on chance & luck. Payments are non-refundable.
+            <strong style="color:#ff8a80;">Terms & Policies:</strong> We are strictly NOT responsible if you lose too many times. Spinning is based purely on chance & luck.
         </div>
         <label style="font-size:12.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:14px;">
             <input type="checkbox" id="terms" style="width:16px; height:16px; margin:0;"> I agree to the Terms & Policies
@@ -302,72 +279,59 @@ th { color: #ffd700; background: rgba(0,0,0,0.35); text-transform: uppercase; fo
     <div id="game-sec" class="hidden">
         <div class="grid">
             <div class="card" style="text-align:center;">
-                <h2 style="margin:0; color:#ffd700;">🎡 Dashain Lucky Wheel</h2>
-                <p style="font-size:13px; color:#cbd5e1; margin:4px 0 10px 0;">Win Robux, Free Spins, or fun festival treats!</p>
+                <h2 style="margin:0; color:#ffd700; font-size:20px;">🎡 Dashain Lucky Wheel</h2>
+                <p style="font-size:12px; color:#cbd5e1; margin:4px 0 10px 0;">Win Robux, Free Spins, or festival treats!</p>
                 <div class="wheel-box">
                     <div class="ptr"></div>
                     <canvas id="wheel" width="440" height="440"></canvas>
                     <div class="hub">SPIN</div>
                 </div>
-                <h3 id="win-msg" style="color:#ffd700; min-height:26px; margin:10px 0;">🌺 Happy Dashain! Spin Now!</h3>
-                <button id="spin-btn" class="btn btn-green" onclick="spin()" style="max-width:270px; font-size:17px;">🪁 SPIN THE WHEEL</button>
+                <h3 id="win-msg" style="color:#ffd700; min-height:26px; margin:10px 0; font-size:15px;">🌺 Happy Dashain! Spin Now!</h3>
+                <button id="spin-btn" class="btn btn-green" onclick="spin()" style="max-width:270px; font-size:16px;">🪁 SPIN THE WHEEL</button>
             </div>
 
-            <div class="card" style="text-align:center;">
-                <h3 style="margin:0 0 10px 0; color:#ffd700;">📲 Scan eSewa QR & Send Proof</h3>
-                <img id="qr-img" src="/qr.png" alt="Upload qr.png in Admin Panel" style="max-width:190px; border-radius:12px; border:3px solid #60bb46; display:block; margin:0 auto 12px auto; background:#fff; padding:6px;">
-                <div style="text-align:left; background:rgba(0,0,0,0.35); padding:14px; border-radius:12px;">
-                    <label style="font-size:12.5px; font-weight:700; color:#00e676;">Attach Payment Screenshot:</label>
-                    <input type="file" id="proof-file" accept="image/*">
-                    <button class="btn" id="up-btn" onclick="sendProof()" style="margin-top:6px;">📤 Send Payment Proof</button>
-                    <p id="up-msg" style="font-size:12.5px; font-weight:700; margin:8px 0 0 0; text-align:center;"></p>
+            <!-- Replaced QR scan box with TikTok text requirement -->
+            <div class="card" style="text-align:center; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                <h3 style="margin:0 0 12px 0; color:#ffd700; font-size:20px;">🎬 Need More Spins?</h3>
+                <div style="background: rgba(255,255,255,0.05); border: 2px dashed #00e676; padding: 25px 15px; border-radius: 14px; width: 100%;">
+                    <p style="font-size: 16px; font-weight: 700; color: #fff; margin: 0; line-height: 1.5;">
+                        DM <span style="color: #00e676; font-size: 18px; text-decoration: underline;">robuxkarobar</span> on TikTok for more spins!
+                    </p>
                 </div>
             </div>
         </div>
 
         <div class="card">
-            <h3 style="margin:0; color:#ffd700;">🏆 My Activity & Prize History</h3>
-            <table>
-                <thead><tr><th>Prize / Activity</th><th>Status</th><th>Time</th></tr></thead>
-                <tbody id="u-hist"></tbody>
-            </table>
+            <h3 style="margin:0 0 10px 0; color:#ffd700; font-size:18px;">🏆 My Activity History</h3>
+            <div class="table-responsive">
+                <table>
+                    <thead><tr><th>Prize</th><th>Status</th><th>Time</th><th>Action</th></tr></thead>
+                    <tbody id="u-hist"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
     <!-- ADMIN -->
     <div id="admin-sec" class="card hidden" style="border:2px solid #00e676;">
-        <h2 style="margin-top:0; color:#00e676;">🛡️ Robux Karobar — Admin Control Panel</h2>
+        <h2 style="margin-top:0; color:#00e676; font-size:20px;">🛡️ Admin Control Panel</h2>
 
-        <div style="background:rgba(0,0,0,0.4); padding:15px; border-radius:12px; margin-bottom:20px;">
-            <h4 style="margin:0 0 6px 0; color:#ffd700;">🖼️ Upload / Update eSewa QR Photo</h4>
-            <input type="file" id="admin-qr-file" accept="image/*" style="max-width:300px;">
-            <button class="btn btn-green" onclick="uploadQr()" style="width:auto; padding:9px 18px;">Upload QR Image</button>
+        <h3 style="color:#ffd700; font-size:17px; margin-top:15px;">🎁 Robux Prize Winners</h3>
+        <div class="table-responsive">
+            <table>
+                <thead><tr><th>Email</th><th>Roblox User</th><th>Prize</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody id="a-prizes"></tbody>
+            </table>
         </div>
 
-        <h3 style="color:#ffd700;">📸 Player Payment Proofs (Click Photo to Enlarge & Confirm)</h3>
-        <table>
-            <thead><tr><th>Email</th><th>Roblox User</th><th>Photo Proof</th><th>Status</th><th>Confirm & Give Spins</th></tr></thead>
-            <tbody id="a-pay"></tbody>
-        </table>
-
-        <h3 style="color:#ffd700; margin-top:24px;">🎁 Robux Prize Winners (Send Robux to Roblox Users)</h3>
-        <table>
-            <thead><tr><th>Email</th><th>Roblox User</th><th>Prize</th><th>Status</th><th>Action</th></tr></thead>
-            <tbody id="a-prizes"></tbody>
-        </table>
-
-        <h3 style="color:#ffd700; margin-top:24px;">➕ Manual Spin Giving</h3>
-        <div style="display:flex; gap:8px;">
-            <input type="email" id="a-email" placeholder="Player Email">
-            <input type="number" id="a-spins" placeholder="Spins">
-            <button class="btn btn-green" onclick="giveSpins()" style="max-width:160px;">Add Spins</button>
+        <h3 style="color:#ffd700; font-size:17px; margin-top:24px;">➕ Manual Spin Giving</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <input type="email" id="a-email" placeholder="Player Email" style="flex:2; min-width:180px; margin:0;">
+            <input type="number" id="a-spins" placeholder="Spins" style="flex:1; min-width:80px; margin:0;">
+            <button class="btn btn-green" onclick="giveSpins()" style="flex:1; min-width:130px;">Add Spins</button>
         </div>
         <p id="a-msg" style="color:#00e676; font-weight:700; margin-top:6px;"></p>
     </div>
-</div>
-
-<div id="modal" class="hidden" onclick="this.classList.add('hidden')" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:999; display:flex; align-items:center; justify-content:center; cursor:zoom-out;">
-    <img id="m-img" style="max-width:90%; max-height:90%; border-radius:12px; border:3px solid #ffd700;">
 </div>
 
 <script>
@@ -385,7 +349,7 @@ function drawWheel() {
         
         ctx.save(); ctx.translate(220, 220); ctx.rotate(s + arc / 2); ctx.textAlign = 'right';
         ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-        ctx.font = '800 14px Poppins'; ctx.fillText(LABELS[i], 195, 6); ctx.restore();
+        ctx.font = '800 13px Poppins'; ctx.fillText(LABELS[i], 195, 5); ctx.restore();
     }
 }
 drawWheel();
@@ -396,7 +360,7 @@ function setMode(m) {
     mode = m;
     document.getElementById('t-log').classList.toggle('active', m === 'login');
     document.getElementById('t-reg').classList.toggle('active', m === 'register');
-    document.getElementById('auth-btn').innerText = m === 'login' ? 'LOGIN & SPIN' : 'CLAIM 1 FREE SPIN & REGISTER';
+    document.getElementById('auth-btn').innerText = m === 'login' ? 'LOGIN & SPIN' : 'CLAIM 5 FREE SPINS & REGISTER';
 }
 
 async function submitAuth() {
@@ -414,17 +378,28 @@ async function logout() { await fetch('/api/logout', { method: 'POST' }); locati
 
 async function loadMe() {
     const r = await fetch('/api/me'); if (!r.ok) return;
-    const { user, history, payments } = await r.json();
+    const { user, history } = await r.json();
     document.getElementById('auth-sec').classList.add('hidden');
     document.getElementById('game-sec').classList.remove('hidden');
     document.getElementById('nav-user').classList.remove('hidden');
     document.getElementById('u-info').innerText = '🎮 ' + user.roblox_user;
     document.getElementById('u-spins').innerText = user.spins;
 
-    const pRows = payments.map(p => '<tr><td>📸 Payment Proof</td><td>' + p.status + (p.spins_added ? ' (+' + p.spins_added + ' Spins)' : '') + '</td><td>' + new Date(p.created_at).toLocaleTimeString() + '</td></tr>');
-    const hRows = history.map(h => '<tr><td>🎡 <strong>' + h.prize + '</strong></td><td>' + h.status + '</td><td>' + new Date(h.won_at).toLocaleTimeString() + '</td></tr>');
-    document.getElementById('u-hist').innerHTML = pRows.concat(hRows).join('');
+    document.getElementById('u-hist').innerHTML = history.map(h => {
+        let cancelBtn = '';
+        if (h.status === 'Pending Robux Payout') {
+            cancelBtn = ' <button onclick="cancelReq(' + h.id + ')" style="background:#ef4444;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-weight:600;font-size:11px;">Cancel</button>';
+        }
+        return '<tr><td><strong>🎡 ' + h.prize + '</strong></td><td>' + h.status + '</td><td>' + new Date(h.won_at).toLocaleTimeString() + '</td><td>' + cancelBtn + '</td></tr>';
+    }).join('');
+
     if (user.is_admin) { document.getElementById('admin-sec').classList.remove('hidden'); loadAdmin(); }
+}
+
+async function cancelReq(id) {
+    if (!confirm('Are you sure you want to cancel this request?')) return;
+    await fetch('/api/cancel-request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+    loadMe();
 }
 
 async function spin() {
@@ -444,48 +419,9 @@ async function spin() {
     }, 4200);
 }
 
-function compressAndSend(file, url, cb) {
-    const reader = new FileReader();
-    reader.onload = e => {
-        const img = new Image();
-        img.onload = async () => {
-            const c = document.createElement('canvas');
-            const max = 700; let w = img.width, h = img.height;
-            if (w > max || h > max) { if (w > h) { h *= max / w; w = max; } else { w *= max / h; h = max; } }
-            c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
-            const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ imageBase64: c.toDataURL('image/jpeg', 0.8) }) });
-            cb(await res.json());
-        };
-        img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-}
-
-function sendProof() {
-    const f = document.getElementById('proof-file').files[0], msg = document.getElementById('up-msg');
-    if (!f) return msg.innerText = 'Select your payment screenshot first!';
-    msg.innerText = 'Uploading...';
-    compressAndSend(f, '/api/payment-proof', d => { msg.innerText = d.message || d.error; loadMe(); });
-}
-
-function uploadQr() {
-    const f = document.getElementById('admin-qr-file').files[0];
-    if (!f) return alert('Select your QR image first!');
-    compressAndSend(f, '/api/admin/upload-qr', d => { alert(d.message); document.getElementById('qr-img').src = '/qr.png?t=' + Date.now(); });
-}
-
-function showImg(src) { document.getElementById('m-img').src = src; document.getElementById('modal').classList.remove('hidden'); }
-
 async function loadAdmin() {
-    const r = await fetch('/api/admin/data'); const { prizes, payments } = await r.json();
-    document.getElementById('a-pay').innerHTML = payments.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td><img class="thumb" src="' + p.image + '" onclick="showImg(this.src)"></td><td>' + p.status + '</td><td>' + (p.status === 'Pending' ? '<input type="number" id="sp-' + p.id + '" value="1" style="width:60px;padding:5px;margin-right:5px;background:#0e0517;color:#fff;border:1px solid #ffd700;"><button onclick="okPay(' + p.id + ')" style="background:#00e676;border:none;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;">Confirm</button>' : 'Done (+' + p.spins_added + ')') + '</td></tr>').join('');
-    document.getElementById('a-prizes').innerHTML = prizes.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td style="color:#ffd700;font-weight:800;">' + p.prize + '</td><td>' + p.status + '</td><td>' + (p.status.includes('Pending') ? '<button onclick="okPrize(' + p.id + ')" style="background:#ffd700;border:none;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;">Mark Robux Sent</button>' : '✅ Sent') + '</td></tr>').join('');
-}
-
-async function okPay(id) {
-    const spinsToGive = document.getElementById('sp-' + id).value;
-    await fetch('/api/admin/approve-payment', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ paymentId: id, spinsToGive }) });
-    loadAdmin(); loadMe();
+    const r = await fetch('/api/admin/data'); const { prizes } = await r.json();
+    document.getElementById('a-prizes').innerHTML = prizes.map(p => '<tr><td>' + p.email + '</td><td style="color:#00e676;font-weight:700;">' + p.roblox_user + '</td><td style="color:#ffd700;font-weight:800;">' + p.prize + '</td><td>' + p.status + '</td><td>' + (p.status.includes('Pending') ? '<button onclick="okPrize(' + p.id + ')" style="background:#ffd700;border:none;padding:5px 10px;border-radius:6px;font-weight:700;cursor:pointer;">Mark Sent</button>' : '✅ Done') + '</td></tr>').join('');
 }
 
 async function okPrize(id) {
@@ -505,5 +441,5 @@ loadMe();
 </html>`;
 
 fs.writeFileSync(path.join(publicDir, 'index.html'), html);
-app.listen(PORT, () => console.log('Robux Karobar Final Dashain Edition is LIVE at: http://localhost:' + PORT));
+app.listen(PORT, () => console.log('Robux Karobar Final Edition is LIVE at: http://localhost:' + PORT));
 // === END OF FILE ===
