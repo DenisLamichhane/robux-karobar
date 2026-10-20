@@ -49,8 +49,8 @@ const PRIZES = [
     { id: 3, name: 'Virtual Fanta 🥤', weight: 12 },
     { id: 4, name: 'Better Luck', weight: 6.9998 },
     { id: 5, name: 'Dashain Blessing 🙏', weight: 0.0001 },
-    { id: 6, name: '50 Robux', weight: 0.0001 },
-    { id: 7, name: '100 Robux', weight: 0.0001 }
+    { id: 6, name: '50 Robux', weight: 10 },
+    { id: 7, name: '100 Robux', weight: 10 }
 ];
 
 function auth(req, res, next) {
