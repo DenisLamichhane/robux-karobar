@@ -4,9 +4,10 @@
       "id": 1,
       "email": "denislamichhane900@gmail.com",
       "roblox_user": "denislamichhane",
-      "password": "$2b$10$c8n0FIQntbOkURsolXlQ9e9aUNhPMP4TiWmcCqh/s7NJh1e2XCnoq",
-      "spins": 999,
-      "is_admin": 1
+      "password": "$2b$10$FekVfae0AGIFP1qvbWufEu6owt5T/..qheMfKUclnM.PlLP6fP21q",
+      "spins": 995,
+      "is_admin": 1,
+      "balance": 0
     },
     {
       "id": 1792470710511,
@@ -14,10 +15,109 @@
       "roblox_user": "MajesticKimRBLX",
       "password": "$2b$10$5R3Yz.U1wFes2ERZL5xde.zEeQiKrmg/UfGznwDxbNTRiBW9hLLIK",
       "spins": 1,
+      "is_admin": 0,
+      "balance": 0
+    },
+    {
+      "id": 1,
+      "roblox_user": "denislamichhane900@gmail.com",
+      "password": "$2b$10$ifpqrTFUCGPesx6mIph4HO9ji1qnwbIxuIt5eDyRmXD.UpNB1LemW",
+      "spins": 999,
+      "balance": 1000,
+      "is_admin": 1
+    },
+    {
+      "id": 1792558784778,
+      "roblox_user": "denislamichhane1",
+      "spins": 0,
+      "balance": 0,
       "is_admin": 0
     }
   ],
-  "history": [],
+  "history": [
+    {
+      "id": 1792558802282,
+      "user_id": 1792558784778,
+      "roblox_user": "denislamichhane1",
+      "prize": "Virtual Selroti 🥮",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:00:02.282Z"
+    },
+    {
+      "id": 1792558807644,
+      "user_id": 1792558784778,
+      "roblox_user": "denislamichhane1",
+      "prize": "Dashain Tika 🌺",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:00:07.644Z"
+    },
+    {
+      "id": 1792558812756,
+      "user_id": 1792558784778,
+      "roblox_user": "denislamichhane1",
+      "prize": "Try Again ❌",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:00:12.756Z"
+    },
+    {
+      "id": 1792558817581,
+      "user_id": 1792558784778,
+      "roblox_user": "denislamichhane1",
+      "prize": "Virtual Momo 🥟",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:00:17.581Z"
+    },
+    {
+      "id": 1792558822572,
+      "user_id": 1792558784778,
+      "roblox_user": "denislamichhane1",
+      "prize": "Virtual Selroti 🥮",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:00:22.572Z"
+    },
+    {
+      "id": 1792558858381,
+      "user_id": 1,
+      "roblox_user": "denislamichhane",
+      "prize": "Try Again ❌",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:00:58.381Z"
+    },
+    {
+      "id": 1792558863347,
+      "user_id": 1,
+      "roblox_user": "denislamichhane",
+      "prize": "Try Again ❌",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:01:03.347Z"
+    },
+    {
+      "id": 1792558879805,
+      "user_id": 1,
+      "roblox_user": "denislamichhane",
+      "prize": "Virtual Selroti 🥮",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:01:19.805Z"
+    },
+    {
+      "id": 1792559147891,
+      "user_id": 1,
+      "roblox_user": "denislamichhane",
+      "prize": "Dashain Tika 🌺",
+      "robux": 0,
+      "status": "Completed (Fun Item)",
+      "won_at": "2026-10-21T05:05:47.891Z"
+    }
+  ],
   "payments": [],
-  "total_spins_done": 0
+  "total_spins_done": 9,
+  "withdrawals": []
 }

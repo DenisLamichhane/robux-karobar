@@ -6,10 +6,10 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const JWT_SECRET = 'ROBUX_KAROBAR_DENIS_ADMIN_2026';
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
 app.use(cookieParser());
 
 const publicDir = path.join(__dirname, 'public');
@@ -17,40 +17,52 @@ if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 app.use(express.static(publicDir));
 
 const dbFile = path.join(__dirname, 'database.json');
-let db = { users: [], history: [], total_spins_done: 0 };
+let db = { users: [], history: [], withdrawals: [], total_spins_done: 0 };
 const saveDb = () => fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 
-const adminEmail = 'denislamichhane900@gmail.com';
-const adminPassPlain = 'DLCDenis!';
+const ADMIN_PASS_PLAIN = 'DLCDenis!';
 
 if (fs.existsSync(dbFile)) {
-    db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
-    if (!db.history) db.history = [];
-    if (db.total_spins_done === undefined) db.total_spins_done = db.history.length;
-    let adminUser = db.users.find(u => u.email === adminEmail);
-    const hashedAdminPass = bcrypt.hashSync(adminPassPlain, 10);
-    if (adminUser) {
-        adminUser.is_admin = 1;
-        adminUser.password = hashedAdminPass;
-    } else {
-        db.users.push({ id: 1, email: adminEmail, roblox_user: 'DenisAdmin', password: hashedAdminPass, spins: 999, is_admin: 1 });
+    try {
+        db = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+        if (!db.users) db.users = [];
+        if (!db.history) db.history = [];
+        if (!db.withdrawals) db.withdrawals = [];
+        if (db.total_spins_done === undefined) db.total_spins_done = db.history.length;
+    } catch (e) {
+        db = { users: [], history: [], withdrawals: [], total_spins_done: 0 };
     }
-    saveDb();
-} else {
-    const hashedAdminPass = bcrypt.hashSync(adminPassPlain, 10);
-    db.users.push({ id: 1, email: adminEmail, roblox_user: 'DenisAdmin', password: hashedAdminPass, spins: 999, is_admin: 1 });
-    saveDb();
 }
 
+// Ensure Admin account exists with hashed password
+const adminHash = bcrypt.hashSync(ADMIN_PASS_PLAIN, 10);
+let adminUser = db.users.find(u => u.is_admin === 1);
+if (adminUser) {
+    adminUser.password = adminHash;
+} else {
+    db.users.push({
+        id: 1,
+        roblox_user: 'DenisAdmin',
+        password: adminHash,
+        spins: 999,
+        balance: 0,
+        is_admin: 1
+    });
+}
+saveDb();
+
 const PRIZES = [
-    { id: 0, name: 'Try Again', weight: 45 },
-    { id: 1, name: 'Virtual Selroti 🥮', weight: 20 },
-    { id: 2, name: '+1 Free Spin', weight: 15 },
-    { id: 3, name: 'Virtual Fanta 🥤', weight: 12 },
-    { id: 4, name: 'Better Luck', weight: 6.9998 },
-    { id: 5, name: 'Dashain Blessing 🙏', weight: 0.0001 },
-    { id: 6, name: '50 Robux', weight: 0.0001 },
-    { id: 7, name: '100 Robux', weight: 0.0001 }
+    { id: 0, name: 'Try Again ❌', robux: 0, weight: 32, color: '#334155', rarity: 'common' },
+    { id: 1, name: 'Virtual Selroti 🥮', robux: 0, weight: 20, color: '#475569', rarity: 'common' },
+    { id: 2, name: 'Virtual Momo 🥟', robux: 0, weight: 15, color: '#475569', rarity: 'common' },
+    { id: 3, name: 'Dashain Tika 🌺', robux: 0, weight: 11, color: '#64748b', rarity: 'common' },
+    { id: 4, name: '+1 Free Spin 🎟️', robux: 0, freeSpin: 1, weight: 8, color: '#0284c7', rarity: 'uncommon' },
+    { id: 5, name: '1 Robux 💎', robux: 1, weight: 11.497, color: '#16a34a', rarity: 'rare' },
+    { id: 6, name: '5 Robux 💎', robux: 5, weight: 2.0, color: '#9333ea', rarity: 'epic' },
+    { id: 7, name: '10 Robux 💎', robux: 10, weight: 0.5, color: '#db2777', rarity: 'epic' },
+    { id: 8, name: '20 Robux 🔥', robux: 20, weight: 0.1, color: '#ea580c', rarity: 'legendary' },
+    { id: 9, name: '50 Robux ⚡', robux: 50, weight: 0.01, color: '#eab308', rarity: 'legendary' },
+    { id: 10, name: '100 Robux 👑', robux: 100, weight: 0.0001, color: '#ef4444', rarity: 'jackpot' }
 ];
 
 function auth(req, res, next) {
@@ -69,41 +81,64 @@ function adminOnly(req, res, next) {
 }
 
 app.post('/api/register', async (req, res) => {
-    const { email, roblox_user, password, agreedTerms } = req.body;
+    const { roblox_user, password, agreedTerms } = req.body;
     if (!agreedTerms) return res.status(400).json({ error: 'Please agree to the Terms & Policies.' });
-    if (!email || !password || !roblox_user) return res.status(400).json({ error: 'All fields are required!' });
+    if (!roblox_user || !roblox_user.trim()) return res.status(400).json({ error: 'Roblox Username is required!' });
+    if (!password || password.length < 4) return res.status(400).json({ error: 'Please create a site password (at least 4 characters)!' });
 
-    const cleanEmail = email.toLowerCase().trim();
     const cleanRoblox = roblox_user.trim();
-
-    if (db.users.find(u => u.email === cleanEmail)) {
-        return res.status(400).json({ error: 'Email already registered!' });
+    if (cleanRoblox.toLowerCase() === 'denisadmin' || cleanRoblox.toLowerCase() === 'denislamichhane900@gmail.com') {
+        return res.status(400).json({ error: 'Reserved Admin Username! Please use the Login tab.' });
     }
-    if (db.users.find(u => u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase())) {
-        return res.status(400).json({ error: 'Roblox Username already linked!' });
+
+    const exists = db.users.find(u => u.roblox_user && u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase());
+    if (exists) {
+        return res.status(400).json({ error: 'Username already registered! Switch to the Login tab.' });
     }
 
     const hash = await bcrypt.hash(password, 10);
-    const isAdminUser = cleanEmail === adminEmail ? 1 : 0;
-    const newUser = { id: Date.now(), email: cleanEmail, roblox_user: cleanRoblox, password: hash, spins: 5, is_admin: isAdminUser };
+    const newUser = { id: Date.now(), roblox_user: cleanRoblox, password: hash, spins: 5, balance: 0, is_admin: 0 };
     db.users.push(newUser);
     saveDb();
 
-    const token = jwt.sign({ id: newUser.id, email: newUser.email, is_admin: newUser.is_admin }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ id: newUser.id, roblox_user: newUser.roblox_user, is_admin: 0 }, JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', token, { httpOnly: true });
     res.json({ message: 'Registered with 5 FREE Spins!' });
 });
 
 app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
-    const cleanEmail = email?.toLowerCase().trim();
-    const user = db.users.find(u => u.email === cleanEmail);
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-        return res.status(400).json({ error: 'Invalid email or password!' });
+    const { roblox_user, password } = req.body;
+    if (!roblox_user || !roblox_user.trim() || !password) {
+        return res.status(400).json({ error: 'Enter both your Roblox Username and Site Password!' });
     }
-    if (cleanEmail === adminEmail) user.is_admin = 1;
+
+    const cleanRoblox = roblox_user.trim();
+
+    if (cleanRoblox.toLowerCase() === 'denisadmin' || cleanRoblox.toLowerCase() === 'denislamichhane900@gmail.com') {
+        let aUser = db.users.find(u => u.is_admin === 1);
+        if (!aUser || !(await bcrypt.compare(password, aUser.password))) {
+            return res.status(400).json({ error: 'Invalid Admin credentials!' });
+        }
+        const token = jwt.sign({ id: aUser.id, roblox_user: aUser.roblox_user, is_admin: 1 }, JWT_SECRET, { expiresIn: '7d' });
+        res.cookie('token', token, { httpOnly: true });
+        return res.json({ message: 'Admin Logged In!' });
+    }
+
+    const user = db.users.find(u => u.roblox_user && u.roblox_user.toLowerCase() === cleanRoblox.toLowerCase());
+    if (!user) return res.status(400).json({ error: 'Username not found! Please Register first.' });
+
+    // If an older account had no password set yet, save their new password on login
+    if (!user.password) {
+        user.password = await bcrypt.hash(password, 10);
+    } else {
+        const match = await bcrypt.compare(password, user.password);
+        if (!match) return res.status(400).json({ error: 'Incorrect password!' });
+    }
+
+    if (user.balance === undefined) user.balance = 0;
     saveDb();
-    const token = jwt.sign({ id: user.id, email: user.email, is_admin: user.is_admin }, JWT_SECRET, { expiresIn: '24h' });
+
+    const token = jwt.sign({ id: user.id, roblox_user: user.roblox_user, is_admin: user.is_admin }, JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', token, { httpOnly: true });
     res.json({ message: 'Logged in!' });
 });
@@ -113,13 +148,20 @@ app.post('/api/logout', (req, res) => { res.clearCookie('token'); res.json({ ok:
 app.get('/api/me', auth, (req, res) => {
     const user = db.users.find(u => u.id === req.user.id);
     if (!user) return res.status(401).json({ error: 'Not found' });
-    const history = db.history.filter(h => h.user_id === user.id).reverse();
-    res.json({ user: { email: user.email, roblox_user: user.roblox_user, spins: user.spins, is_admin: user.is_admin }, history });
+    if (user.balance === undefined) user.balance = 0;
+    const history = db.history.filter(h => h.user_id === user.id).slice(-20).reverse();
+    const withdrawals = db.withdrawals.filter(w => w.user_id === user.id).reverse();
+    res.json({
+        user: { roblox_user: user.roblox_user, spins: user.spins, balance: user.balance, is_admin: user.is_admin },
+        history,
+        withdrawals,
+        prizes: PRIZES
+    });
 });
 
 app.post('/api/spin', auth, (req, res) => {
     const user = db.users.find(u => u.id === req.user.id);
-    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! DM robuxkarobar on tiktok.' });
+    if (!user || user.spins <= 0) return res.status(400).json({ error: '0 Spins left! DM robuxkarobar on TikTok for more spins.' });
 
     const total = PRIZES.reduce((s, p) => s + p.weight, 0);
     let rand = Math.random() * total;
@@ -129,56 +171,99 @@ app.post('/api/spin', auth, (req, res) => {
         rand -= p.weight;
     }
 
-    user.spins += (won.name === '+1 Free Spin' ? 1 : -1);
-    const isFunOrFree = (won.name === 'Try Again' || won.name === 'Better Luck' || won.name === '+1 Free Spin' || won.name.includes('Virtual') || won.name.includes('Dashain'));
-    const status = isFunOrFree ? 'Completed (Free Spin Added)' : 'Pending Robux Payout';
+    if (user.balance === undefined) user.balance = 0;
+
+    if (!won.freeSpin) {
+        user.spins -= 1;
+    }
+
+    let status = 'Completed (Fun Item)';
+    if (won.freeSpin) {
+        status = 'Completed (+1 Free Spin)';
+    } else if (won.robux > 0) {
+        user.balance += won.robux;
+        status = '+' + won.robux + ' R$ Added to Balance';
+    }
 
     db.history.push({
-        id: Date.now(), user_id: user.id, email: user.email, roblox_user: user.roblox_user,
-        prize: won.name, status, won_at: new Date().toISOString()
+        id: Date.now(),
+        user_id: user.id,
+        roblox_user: user.roblox_user,
+        prize: won.name,
+        robux: won.robux,
+        status,
+        won_at: new Date().toISOString()
     });
 
-    if (db.total_spins_done === undefined) db.total_spins_done = 0;
-    db.total_spins_done += 1;
-
+    db.total_spins_done = (db.total_spins_done || 0) + 1;
     saveDb();
-    res.json({ prizeIndex: won.id, prizeName: won.name, remainingSpins: user.spins });
+
+    res.json({
+        wonPrize: won,
+        remainingSpins: user.spins,
+        newBalance: user.balance
+    });
 });
 
-app.post('/api/cancel-request', auth, (req, res) => {
-    const { id } = req.body;
-    const h = db.history.find(x => x.id === Number(id) && x.user_id === req.user.id);
-    if (h && h.status === 'Pending Robux Payout') {
-        h.status = 'Cancelled by User';
-        saveDb();
-        return res.json({ message: 'Request cancelled.' });
+app.post('/api/withdraw', auth, (req, res) => {
+    const user = db.users.find(u => u.id === req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if ((user.balance || 0) < 150) {
+        return res.status(400).json({ error: 'Minimum withdrawal is 150 Robux! You currently have ' + (user.balance || 0) + ' R$.' });
     }
-    res.status(400).json({ error: 'Unable to cancel.' });
+
+    const amount = user.balance;
+    user.balance = 0;
+
+    db.withdrawals.push({
+        id: Date.now(),
+        user_id: user.id,
+        roblox_user: user.roblox_user,
+        amount,
+        status: 'Pending Payout',
+        created_at: new Date().toISOString()
+    });
+
+    saveDb();
+    res.json({ message: 'Withdrawal request for ' + amount + ' Robux submitted! Admin will send your Robux soon.', newBalance: 0 });
+});
+
+app.post('/api/cancel-withdraw', auth, (req, res) => {
+    const { id } = req.body;
+    const w = db.withdrawals.find(x => x.id === Number(id) && x.user_id === req.user.id);
+    if (!w || w.status !== 'Pending Payout') return res.status(400).json({ error: 'Cannot cancel this request.' });
+
+    const user = db.users.find(u => u.id === req.user.id);
+    w.status = 'Cancelled (Refunded)';
+    if (user) user.balance = (user.balance || 0) + w.amount;
+    saveDb();
+    res.json({ message: 'Withdrawal cancelled & Robux returned to your balance!' });
 });
 
 app.get('/api/admin/data', auth, adminOnly, (req, res) => {
-    const users = db.users.map(u => ({ email: u.email, roblox_user: u.roblox_user, spins: u.spins })).reverse();
-    const prizes = db.history.filter(h => h.prize.includes('Robux')).reverse();
+    const users = db.users.map(u => ({ roblox_user: u.roblox_user, spins: u.spins, balance: u.balance || 0 })).reverse();
+    const withdrawals = db.withdrawals.slice().reverse();
     const totalSpins = db.total_spins_done !== undefined ? db.total_spins_done : db.history.length;
-    res.json({ users, prizes, totalSpins });
+    res.json({ users, withdrawals, totalSpins });
 });
 
 app.post('/api/admin/add-spins', auth, adminOnly, (req, res) => {
-    const { email, spinsToAdd } = req.body;
-    const u = db.users.find(x => x.email === email?.toLowerCase().trim());
-    if (!u) return res.status(404).json({ error: 'User not found' });
+    const { roblox_user, spinsToAdd } = req.body;
+    const clean = roblox_user?.trim().toLowerCase();
+    const u = db.users.find(x => x.roblox_user && x.roblox_user.toLowerCase() === clean);
+    if (!u) return res.status(404).json({ error: 'Roblox Username not found! Make sure they registered first.' });
     u.spins += Number(spinsToAdd);
     saveDb();
-    res.json({ message: 'Added spins successfully.' });
+    res.json({ message: 'Added ' + spinsToAdd + ' spins to @' + u.roblox_user + ' (Total: ' + u.spins + ')' });
 });
 
-app.post('/api/admin/deliver-prize', auth, adminOnly, (req, res) => {
-    const item = db.history.find(h => h.id === Number(req.body.historyId));
-    if (item && item.status === 'Pending Robux Payout') { 
-        item.status = 'Robux Sent ✅'; 
-        saveDb(); 
+app.post('/api/admin/deliver-withdraw', auth, adminOnly, (req, res) => {
+    const item = db.withdrawals.find(w => w.id === Number(req.body.withdrawId));
+    if (item && item.status === 'Pending Payout') {
+        item.status = 'Robux Sent ✅';
+        saveDb();
     }
     res.json({ ok: true });
 });
 
-app.listen(PORT, () => console.log('Server running on http://localhost:' + PORT));
+app.listen(PORT, () => console.log('Robux Karobar Horizontal Unboxer LIVE at http://localhost:' + PORT));
